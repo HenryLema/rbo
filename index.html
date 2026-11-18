@@ -945,7 +945,7 @@ function busTick(){
     }
   }
 }
-setInterval(()=>{ if(Date.now()-_lastTickAt>2500) busTick(); },2000);
+setInterval(()=>{ if(Date.now()-_lastTickAt>2500) busTick(); },3000);
 document.addEventListener("visibilitychange",()=>{ if(!document.hidden) busTick(); });
 
 // ═══════════════════════════════════════════════════════════════
