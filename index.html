@@ -696,7 +696,7 @@ function stablePoint(lat,lon) {
 }
 
 // ─── Tramos por calle (OSRM): la línea SOLO se dibuja con geometría de calles, nunca con GPS crudo ───
-const GRAPH_MS=1300;   // la página grafica cada 1.3 s
+const GRAPH_MS=500;   // la página grafica cada 1.3 s
 let routePending=false, routeFails=0, routePausedUntil=0, lastRouteAt=0, routeRejects=0;
 function bearingDeg(a,b){
   const r=Math.PI/180, y=Math.sin((b[1]-a[1])*r)*Math.cos(b[0]*r),
