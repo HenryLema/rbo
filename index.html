@@ -285,7 +285,7 @@
       <div class="chip">⏱️ Hora: <span id="hora" style="margin-left:3px">--</span></div>
       <div class="chip">🚦 Estado:&nbsp;<span id="busState" class="busstate-pill stopped">Detenido</span></div>
       <button id="btnReload"      class="chip">🔄 Recargar</button>
-      <button id="btnRestart"     class="chip">⏻ Reset ESP32</button>
+      <button id="btnRestart"     class="chip">🔁 Reset ESP32</button>
       <button id="btnToggleTrail" class="chip">🟢 Recorrido: Si</button>
       <button id="btnInfo"        class="chip">ℹ️ Info</button>
       <button id="btnDibujar"     class="chip">📊 Calcular</button>
@@ -408,9 +408,11 @@ document.getElementById("btnReload").addEventListener("click", async () => {
   location.reload();   // solo recarga la página (ya NO reinicia el ESP32)
 });
 // Reinicio remoto del ESP32 (equivale a pulsar RESET). Segundos (no ms) para caber en int de 32 bits del ESP32
+let _lastRestartCmd=0;
 document.getElementById("btnRestart").addEventListener("click", async () => {
   if(navigator.onLine===false){ showToast("❌ Sin conexión", 3000); return; }
-  if(!confirm("¿Reiniciar el ESP32 del recolector?")) return;
+  if(Date.now()-_lastRestartCmd<10000) return;   // evita toques repetidos
+  _lastRestartCmd=Date.now();
   try {
     await set(ref(db,"Control/restart_ts"), Math.floor(Date.now()/1000));
     showToast("🔁 Orden enviada: reinicia en ~5 s", 4000);
@@ -515,7 +517,7 @@ map.on("movestart",_userMove);
 const trailLatLngs=[], MAX_POINTS=3000, ctrl=[];
 const TRAIL_STYLE={color:"green",weight:5,opacity:0.9,smoothFactor:1.5,lineCap:"round",lineJoin:"round",interactive:false};
 // Restaura el recorrido guardado (recarga o pestaña descartada por el celular)
-const TRAIL_KEY="rbo_trail_v5", TRAIL_MAX_AGE_MS=60*60*1000;
+const TRAIL_KEY="rbo_trail_v6", TRAIL_MAX_AGE_MS=60*60*1000;
 try{
   const sv=JSON.parse(localStorage.getItem(TRAIL_KEY)||"null");
   if(sv&&Array.isArray(sv.p)&&Date.now()-sv.t<=TRAIL_MAX_AGE_MS)
@@ -695,9 +697,12 @@ function stablePoint(lat,lon) {
   lastStableDraw=p; return p;
 }
 
-// ─── Tramos por calle (OSRM): la línea SOLO se dibuja con geometría de calles, nunca con GPS crudo ───
-const GRAPH_MS=500;   // la página grafica cada 1.3 s
-let routePending=false, routeFails=0, routePausedUntil=0, lastRouteAt=0, routeRejects=0;
+// ─── Ajuste a calles (OSRM match): la línea y el punto SOLO van sobre la calzada ───
+const GRAPH_MS=500;                                            // la página grafica cada 0.5 s (cálculo local, sin red)
+const MATCH_FAST_MS=1500, MATCH_MS=2500, MATCH_SLOW_MS=4000;   // cada cuánto se pide ajuste a OSRM (ahorra datos)
+const SAMPLE_MIN_M=6, MAX_WIN=8;
+let routePending=false, routeFails=0, routePausedUntil=0, lastRouteAt=0, routeRejects=0, matchBroken=false;
+let samples=[], sampleId=0, lastMatchOkAt=0, busDotPos=null;
 function bearingDeg(a,b){
   const r=Math.PI/180, y=Math.sin((b[1]-a[1])*r)*Math.cos(b[0]*r),
         x=Math.cos(a[0]*r)*Math.sin(b[0]*r)-Math.sin(a[0]*r)*Math.cos(b[0]*r)*Math.cos((b[1]-a[1])*r);
@@ -709,45 +714,95 @@ function distToSegM(p,a,b){   // distancia (m) de p al segmento a–b
   const l2=bx*bx+by*by; let t=l2?(px*bx+py*by)/l2:0; t=Math.max(0,Math.min(1,t));
   return Math.hypot(px-t*bx,py-t*by);
 }
-async function routeSegment(a,b,courseDeg){
-  const br=courseDeg>=0?Math.round(courseDeg)%360:bearingDeg(a,b);   // rumbo del GPS si es fiable
-  const ac=new AbortController(), to=setTimeout(()=>ac.abort(),5000);
-  try{
-    // bearings ±60° + continue_straight: solo calles en el sentido de marcha (calzada correcta, sin calles laterales)
-    const r=await fetch(`https://router.project-osrm.org/route/v1/driving/${a[1]},${a[0]};${b[1]},${b[0]}?overview=full&geometries=geojson&alternatives=false&continue_straight=true&radiuses=30;30&bearings=${br},60;${br},60`,{signal:ac.signal});
-    if(!r.ok) throw 0;
-    const rt=(await r.json())?.routes?.[0];
-    if(!rt) return null;
-    const pts=rt.geometry.coordinates.map(c=>[c[1],c[0]]);
-    const d=haversineMeters(a[0],a[1],b[0],b[1]), e=pts[pts.length-1];
-    if(rt.distance>d*1.4+25) return null;                          // desvío raro
-    if(haversineMeters(e[0],e[1],b[0],b[1])>30) return null;       // terminó lejos del vehículo
-    const lim=20+d*0.15;
-    if(pts.some(q=>distToSegM(q,a,b)>lim)) return null;           // se metió por una calle lateral
-    return pts;
-  } finally { clearTimeout(to); }
+function pathNearM(q,path){ let m=1e9; for(let i=0;i<path.length-1;i++){ const d=distToSegM(q,path[i],path[i+1]); if(d<m) m=d; } return m; }
+function decodePoly6(str){   // polyline6: ~50 % menos datos que GeoJSON
+  let i=0,lat=0,lon=0,out=[];
+  while(i<str.length){
+    let b,s=0,r=0;
+    do{ b=str.charCodeAt(i++)-63; r|=(b&31)<<s; s+=5; }while(b>=32);
+    lat+=(r&1)?~(r>>1):(r>>1); s=0; r=0;
+    do{ b=str.charCodeAt(i++)-63; r|=(b&31)<<s; s+=5; }while(b>=32);
+    lon+=(r&1)?~(r>>1):(r>>1);
+    out.push([lat/1e6,lon/1e6]);
+  }
+  return out;
 }
-function extendTrail(ref,p){
-  const gap=_netSlowNow()?4000:GRAPH_MS;
-  if(routePending||navigator.onLine===false||Date.now()<routePausedUntil||Date.now()-lastRouteAt<gap) return;
-  routePending=true; lastRouteAt=Date.now();
-  const c=Number(latestBusData&&latestBusData.course_deg);
-  const useCourse=isFinite(c)&&c>=0&&lastBusInfo&&lastBusInfo.rawSpeedKmh>=8;
-  routeSegment(ref,p,useCourse?c:-1)
-    .then(pts=>{
-      routeFails=0;
-      if(pts&&pts.length>1){
-        routeRejects=0;
-        if(trailLatLngs.length<=1){ trailLatLngs.length=0; if(trailVisible) trailLine.setLatLngs([]); pts.forEach(pushTrail); }  // reemplaza el 1.er punto crudo
-        else pts.slice(1).forEach(pushTrail);
-        ctrl.length=0; ctrl.push(pts[pts.length-1]);
-      } else if(++routeRejects>=8){ routeRejects=0; addControl(p); }   // calle que no existe en OSM: último recurso
-    })
-    .catch(()=>{ if(++routeFails>=5){ routeFails=0; routePausedUntil=Date.now()+60000; } })   // sin red: NO se dibuja a ciegas, se reintenta
+async function osrmGet(url){
+  const ac=new AbortController(), to=setTimeout(()=>ac.abort(),5000);
+  try{ const r=await fetch(url,{signal:ac.signal}); return {status:r.status,j:await r.json().catch(()=>null)}; }
+  finally{ clearTimeout(to); }
+}
+// Map-matching: OSRM elige la calzada coherente con TODA la trayectoria (respeta sentidos de marcha)
+async function matchSegment(ref,pts){
+  const all=ref?[ref,...pts]:pts;
+  if(all.length<2) return null;
+  const co=all.map(q=>q[1].toFixed(6)+","+q[0].toFixed(6)).join(";");
+  const rad=all.map((_,i)=>(ref&&i===0)?15:30).join(";");
+  const {j}=await osrmGet(`https://router.project-osrm.org/match/v1/driving/${co}?overview=full&geometries=polyline6&steps=false&gaps=ignore&radiuses=${rad}`);
+  if(j&&(j.code==="InvalidService"||j.code==="InvalidUrl")){ matchBroken=true; return null; }
+  const tp=j&&j.tracepoints, ms=j&&j.matchings;
+  if(!tp||!ms||!ms.length||j.code!=="Ok") return null;
+  const first=tp[0], last=tp[tp.length-1];
+  if(!first||!last||first.matchings_index!==last.matchings_index) return null;
+  const m=ms[last.matchings_index];
+  if(!m||m.confidence<0.1) return null;
+  const g=decodePoly6(m.geometry);
+  if(g.length<2) return null;
+  if(ref&&haversineMeters(g[0][0],g[0][1],ref[0],ref[1])>25) return null;
+  const e=g[g.length-1], b=all[all.length-1];
+  if(haversineMeters(e[0],e[1],b[0],b[1])>35) return null;       // terminó lejos del vehículo
+  if(g.some(q=>pathNearM(q,all)>30)) return null;                // se metió por una calle lateral
+  return {pts:g};
+}
+// Respaldo: ruta entre dos puntos con rumbo (si "match" no está disponible o falla varias veces)
+async function routeSegment(a,b,courseDeg){
+  const br=courseDeg>=0?Math.round(courseDeg)%360:bearingDeg(a,b);
+  const {j}=await osrmGet(`https://router.project-osrm.org/route/v1/driving/${a[1]},${a[0]};${b[1]},${b[0]}?overview=full&geometries=geojson&alternatives=false&continue_straight=true&radiuses=30;30&bearings=${br},60;${br},60`);
+  const rt=j&&j.routes&&j.routes[0];
+  if(!rt) return null;
+  const pts=rt.geometry.coordinates.map(c=>[c[1],c[0]]);
+  const d=haversineMeters(a[0],a[1],b[0],b[1]), e=pts[pts.length-1];
+  if(rt.distance>d*1.4+25) return null;
+  if(haversineMeters(e[0],e[1],b[0],b[1])>30) return null;
+  const lim=20+d*0.15;
+  if(pts.some(q=>distToSegM(q,a,b)>lim)) return null;
+  return pts;
+}
+function extendTrail(){
+  if(!samples.length||routePending||navigator.onLine===false) return;
+  const now=Date.now(), sp=(lastBusInfo&&lastBusInfo.rawSpeedKmh)||0;
+  const gap=_netSlowNow()?MATCH_SLOW_MS:(sp>=30?MATCH_FAST_MS:MATCH_MS);
+  if(now<routePausedUntil||now-lastRouteAt<gap) return;
+  const ref=ctrl.length?ctrl[ctrl.length-1]:(trailLatLngs.length?trailLatLngs[trailLatLngs.length-1]:null);
+  const batch=samples.slice(-MAX_WIN);
+  if(!ref&&batch.length<2) return;
+  routePending=true; lastRouteAt=now;
+  const pts=batch.map(x=>x.p), lastId=batch[batch.length-1].id;
+  const c=Number(latestBusData&&latestBusData.course_deg), useCourse=isFinite(c)&&c>=0&&sp>=8;
+  (async()=>{
+    let res=null;
+    if(!matchBroken) res=await matchSegment(ref,pts);
+    if(!res&&ref&&(matchBroken||routeRejects>=2)){
+      const g=await routeSegment(ref,pts[pts.length-1],useCourse?c:-1);
+      if(g&&g.length>1) res={pts:g};
+    }
+    return res;
+  })().then(res=>{
+    routeFails=0;
+    if(res&&res.pts.length>1){
+      routeRejects=0; lastMatchOkAt=Date.now();
+      (ref?res.pts.slice(1):res.pts).forEach(pushTrail);
+      ctrl.length=0; ctrl.push(res.pts[res.pts.length-1]);
+      samples=samples.filter(x=>x.id>lastId);
+    } else {                                  // no se pudo ajustar a la calle: NO se dibuja nada fuera de ella
+      routeRejects++;
+      if(samples.length>MAX_WIN*3) samples=samples.slice(-MAX_WIN);
+    }
+  }).catch(()=>{ if(++routeFails>=5){ routeFails=0; routePausedUntil=Date.now()+60000; } })   // sin red: espera y reintenta
     .finally(()=>{ routePending=false; });
 }
-// Cola corta que prolonga la línea en la dirección de la calle (nunca hacia el GPS crudo)
-function tangentHead(rawLat,rawLon){
+// Prolonga la línea sobre la calzada (dirección del último tramo ajustado) hasta la posición del vehículo
+function tangentHead(rawLat,rawLon,spKmh){
   const n=trailLatLngs.length; if(n<2) return null;
   const h=trailLatLngs[n-1]; let a=null;
   for(let i=n-2;i>=0&&i>=n-8;i--){ const q=trailLatLngs[i]; if(haversineMeters(q[0],q[1],h[0],h[1])>=4){ a=q; break; } }
@@ -756,11 +811,11 @@ function tangentHead(rawLat,rawLon){
   let ux=(h[1]-a[1])*kx, uy=(h[0]-a[0])*ky; const ul=Math.hypot(ux,uy); if(!ul) return null; ux/=ul; uy/=ul;
   const wx=(rawLon-h[1])*kx, wy=(rawLat-h[0])*ky, t=wx*ux+wy*uy, lat=Math.abs(wx*uy-wy*ux);
   if(t<=1||lat>25) return null;
-  const L=Math.min(t,45);
+  const L=Math.min(t,Math.min(150,15+(Number(spKmh||0)/3.6)*2.8));   // más largo a más velocidad
   return [h[0]+uy*L/ky, h[1]+ux*L/kx];
 }
 
-// ✅ Trail: sin rayas en reposo y siempre sobre la calle
+// ✅ Trail: sin rayas en reposo; línea y punto siempre sobre la calzada
 let slowSince=0, fastSince=0;
 function updateGreenTrailForced(rawLat, rawLon, rawSpeedKmh) {
   const speedKmh=Number(rawSpeedKmh||0), now=Date.now();
@@ -771,17 +826,23 @@ function updateGreenTrailForced(rawLat, rawLon, rawSpeedKmh) {
   if(slowSince&&now-slowSince>=5000) trailFrozen=true;
   if(trailFrozen&&((fastSince&&now-fastSince>=2500)||dRef>35)){ trailFrozen=false; lastSmoothed=null; }
   if(ref&&(trailFrozen||(slow&&dRef<35))){
-    flushTail();
-    if(trailVisible&&trailLatLngs.length){ const l=trailLatLngs[trailLatLngs.length-1]; trailHead.setLatLngs([l,l]); }
+    extendTrail();                            // termina de ajustar las últimas muestras
+    const l=trailLatLngs[trailLatLngs.length-1];
+    if(trailVisible&&l) trailHead.setLatLngs([l,l]);
+    busDotPos=(l&&haversineMeters(l[0],l[1],rawLat,rawLon)<60)?l:null;   // detenido: punto sobre la calle
     lastSmoothed=null; return;
   }
   const p0=stablePoint(rawLat,rawLon);
   lastSmoothed=ema2(lastSmoothed,p0,speedKmh>=15?1:SMOOTH_ALPHA_POS);
   const p=lastSmoothed;
-  if(!ref) addControl(p);
-  else if(haversineMeters(ref[0],ref[1],p[0],p[1])>=MIN_ADD_DIST_M) extendTrail(ref,p);
+  const ls=samples.length?samples[samples.length-1].p:ref;
+  if(!ls||haversineMeters(ls[0],ls[1],p[0],p[1])>=SAMPLE_MIN_M){ samples.push({p,id:++sampleId}); if(samples.length>40) samples.shift(); }
+  extendTrail();
   const h=trailLatLngs[trailLatLngs.length-1];
-  if(trailVisible&&h){ const hp=tangentHead(rawLat,rawLon); trailHead.setLatLngs(hp?[h,hp]:[h,h]); }
+  const hp=h?tangentHead(rawLat,rawLon,speedKmh):null;
+  const fresh=!!h&&now-lastMatchOkAt<8000&&haversineMeters(h[0],h[1],rawLat,rawLon)<150;
+  busDotPos=fresh?(hp||h):null;               // sin ajuste reciente se muestra el GPS real
+  if(trailVisible&&h) trailHead.setLatLngs(fresh&&hp?[h,hp]:[h,h]);
 }
 
 // ─── Contenedores ───────────────────────────────────
@@ -956,6 +1017,7 @@ function busTick(){
 
   // ✅ Pasar velocidad cruda al trail para que detecte reposo
   updateGreenTrailForced(info.lat, info.lon, info.rawSpeedKmh);
+  busMarker.setLatLng(busDotPos||[info.lat,info.lon]);   // el punto verde va sobre la calle
 
   // Contenedores / NodoFijo
   if(activeStopId){
