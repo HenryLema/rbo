@@ -1,23 +1,20 @@
-
-
-Mapa otavalo v5 · HTML
 <!doctype html>
 <html lang="es">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
   <title>Basura Otavalo</title>
- 
+
   <link rel="preconnect" href="https://unpkg.com" crossorigin>
   <link rel="preconnect" href="https://recolectorbasuraotavalo-default-rtdb.firebaseio.com" crossorigin>
   <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
   <link rel="dns-prefetch" href="https://a.tile.openstreetmap.org">
   <link rel="dns-prefetch" href="https://b.tile.openstreetmap.org">
   <link rel="dns-prefetch" href="https://c.tile.openstreetmap.org">
- 
+
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
- 
+
   <style>
     *, *::before, *::after {
       box-sizing: border-box;
@@ -29,7 +26,7 @@ Mapa otavalo v5 · HTML
       border: none !important;
       border-color: transparent !important;
     }
- 
+
     html, body {
       height: 100%; width: 100%;
       margin: 0; padding: 0;
@@ -38,9 +35,9 @@ Mapa otavalo v5 · HTML
       overflow: hidden;
       -webkit-tap-highlight-color: transparent;
     }
- 
+
     #map { position: fixed; inset: 0; z-index: 0; }
- 
+
     #top {
       position: fixed;
       top: 0; left: 0; right: 0;
@@ -50,14 +47,14 @@ Mapa otavalo v5 · HTML
       pointer-events: none;
     }
     #top > * { pointer-events: auto; }
- 
+
     #topRow {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
       gap: clamp(4px,1.2vw,7px);
     }
- 
+
     .chip {
       display: inline-flex;
       align-items: center;
@@ -71,7 +68,7 @@ Mapa otavalo v5 · HTML
       cursor: default;
       user-select: none;
     }
- 
+
     button.chip {
       cursor: pointer;
       touch-action: manipulation;
@@ -83,7 +80,7 @@ Mapa otavalo v5 · HTML
       cursor: not-allowed;
       transform: none !important;
     }
- 
+
     .title-chip {
       height: auto;
       min-height: clamp(26px,5vw,34px);
@@ -93,7 +90,7 @@ Mapa otavalo v5 · HTML
       line-height: 1.25;
       max-width: 100%;
     }
- 
+
     .busstate-pill {
       display: inline-block;
       padding: 1px clamp(5px,1.5vw,8px);
@@ -104,19 +101,19 @@ Mapa otavalo v5 · HTML
     }
     .busstate-pill.moving  { background: #008000; }
     .busstate-pill.stopped { background: #cc0000; }
- 
+
     .bus-wrap { width: 22px; height: 22px; border-radius: 50%; }
     .bus-wrap.moving  { background: #008000; }
     .bus-wrap.stopped { background: #cc0000; }
- 
+
     .stop-icon {
       font-size: clamp(22px,4vw,32px);
       transform: translate(-50%,-50%);
       display: block; line-height: 1;
     }
- 
+
     #map.draw-mode { cursor: crosshair !important; }
- 
+
     #drawHint {
       position: fixed;
       bottom: clamp(60px,10vw,80px);
@@ -131,7 +128,7 @@ Mapa otavalo v5 · HTML
       display: none;
       white-space: nowrap;
     }
- 
+
     #toast {
       position: fixed;
       bottom: clamp(60px,10vw,80px);
@@ -148,7 +145,7 @@ Mapa otavalo v5 · HTML
       max-width: 90vw;
       white-space: normal;
     }
- 
+
     @keyframes pulse-ring {
       0%   { transform: translate(-50%,-50%) scale(0.7); opacity: 0.45; }
       70%  { transform: translate(-50%,-50%) scale(1.55); opacity: 0.12; }
@@ -181,7 +178,7 @@ Mapa otavalo v5 · HTML
       padding: 1px 5px; border-radius: 6px;
       white-space: nowrap; pointer-events: none;
     }
- 
+
     .leaflet-bar, .leaflet-bar a,
     .leaflet-touch .leaflet-bar, .leaflet-touch .leaflet-bar a,
     .leaflet-control-attribution { border: none !important; }
@@ -210,16 +207,16 @@ Mapa otavalo v5 · HTML
     .leaflet-zoom-animated    { filter: none !important; -webkit-filter: none !important; }
     .leaflet-shadow-pane      { display: none !important; }
     .leaflet-marker-pane img  { filter: none !important; -webkit-filter: none !important; }
- 
+
     .leaflet-top.leaflet-left  { display: none; }
     .leaflet-bottom.leaflet-right {
       bottom: clamp(12px,3vw,24px);
       right:  clamp(8px,2vw,14px);
     }
- 
+
     .popup-wrap      { width: clamp(130px,35vw,170px); font-family: Arial,sans-serif; }
     .stop-popup-wrap { width: clamp(140px,38vw,180px); font-family: Arial,sans-serif; }
- 
+
     .popup-title, .popup-line,
     .stop-popup-title, .stop-popup-line {
       display: block; color: #000; font-weight: normal;
@@ -229,7 +226,7 @@ Mapa otavalo v5 · HTML
     .popup-val { font-weight: normal; }
     .popup-val.moving  { color: #008000; }
     .popup-val.stopped { color: #cc0000; }
- 
+
     #infoOverlay {
       position: fixed; inset: 0;
       background: rgba(0,0,0,.28);
@@ -276,11 +273,11 @@ Mapa otavalo v5 · HTML
       font-size: clamp(10px,1.7vw,12px); font-weight: normal; margin: 3px 0;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
- 
+
     #map, .chip, .stop-icon { touch-action: manipulation; }
   </style>
 </head>
- 
+
 <body>
   <div id="top">
     <div id="topRow">
@@ -294,11 +291,11 @@ Mapa otavalo v5 · HTML
       <button id="btnDibujar"     class="chip">📊 Calcular</button>
     </div>
   </div>
- 
+
   <div id="map"></div>
   <div id="drawHint">👇 Agregar Punto</div>
   <div id="toast"></div>
- 
+
   <div id="infoOverlay" aria-hidden="true">
     <div id="infoModal" role="dialog" aria-modal="true">
       <div id="infoTopRow">
@@ -317,12 +314,12 @@ Mapa otavalo v5 · HTML
       </div>
     </div>
   </div>
- 
+
 <script type="module">
 import { initializeApp }                          from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
 import { getDatabase, ref, onValue, set, push,
          remove, serverTimestamp, goOffline, goOnline } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-database.js";
- 
+
 // ─── Toast ────────────────────────────────────────────────────
 let _toastTimer = null;
 function showToast(msg, durationMs=4000) {
@@ -332,7 +329,7 @@ function showToast(msg, durationMs=4000) {
   if(_toastTimer) clearTimeout(_toastTimer);
   _toastTimer = setTimeout(() => { el.style.display="none"; }, durationMs);
 }
- 
+
 // ─── Identificador de usuario ─────────────────────────────────
 function getUserId() {
   let uid = localStorage.getItem("rbo_uid");
@@ -343,7 +340,7 @@ function getUserId() {
   return uid;
 }
 const MY_UID = getUserId();
- 
+
 // ─── Firebase ─────────────────────────────────────────────────
 const firebaseConfig = {
   apiKey:            "AIzaSyCZP36RLL7SEWvyLApKKFJzjjssNRe-_LE",
@@ -355,7 +352,7 @@ const firebaseConfig = {
   appId:             "1:900064792007:web:c88637de46577aed87dde2"
 };
 const db = getDatabase(initializeApp(firebaseConfig));
- 
+
 // ─── Conectividad (móviles / portátiles) ──────────────────────
 let fbConnected = false, wasDisconnected = false, _offTimer = null, _hiddenAt = 0;
 onValue(ref(db, ".info/connected"), snap => {
@@ -380,12 +377,12 @@ document.addEventListener("visibilitychange", () => {
   if(document.hidden){ _hiddenAt = Date.now(); return; }
   reconectar(Date.now() - _hiddenAt > 60000);
 });
- 
+
 // ─── Mapa ─────────────────────────────────────────────────────
 const map = L.map("map", {
   zoomControl:false, tap:true, tapTolerance:15, preferCanvas:true
 }).setView([0.23299010950077462,-78.26316758796887],14);
- 
+
 L.Popup.mergeOptions({closeButton:true});
 L.control.zoom({position:"bottomright"}).addTo(map);
 map.attributionControl.setPrefix("🪐 Red Otavalo");
@@ -400,14 +397,14 @@ tiles.on("tileerror", e => {
   if(t._retry > 2) return;
   setTimeout(() => { if(t.isConnected && navigator.onLine !== false) t.src = t.src; }, 1500 * t._retry);
 });
- 
+
 map.on("popupopen", e =>
   setTimeout(()=>{ if(map.hasLayer(e.popup)) map.closePopup(e.popup); },60000)
 );
- 
+
 // ─── Recargar ─────────────────────────────────────────────────
 document.getElementById("btnReload").addEventListener("click", async () => {
- 
+
   location.reload();   // solo recarga la página (ya NO reinicia el ESP32)
 });
 // Reinicio remoto del ESP32 (equivale a pulsar RESET). Segundos (no ms) para caber en int de 32 bits del ESP32
@@ -421,13 +418,13 @@ document.getElementById("btnRestart").addEventListener("click", async () => {
     showToast("🔁 Orden enviada: reinicia en ~3 s", 4000);
   } catch(e) { showToast("❌ No se pudo enviar el reinicio", 3000); }
 });
- 
+
 // ─── Info modal ───────────────────────────────────────────────
 const infoOverlay = document.getElementById("infoOverlay");
 const infoMovilEl = document.getElementById("infoMovil");
 const infoFijoEl  = document.getElementById("infoFijo");
 let infoOpen=false, latestFijoData=null, latestBusData=null;
- 
+
 const safeNum    = (v,d=6) => { const n=Number(v); return isFinite(n)?n.toFixed(d):"--"; };
 const safeVal    = v => (v===undefined||v===null||v===""||
                          (typeof v==="number"&&!isFinite(v)))?"--":String(v);
@@ -437,7 +434,7 @@ const boolToSiNo = v => {
   if(v===false||v==="false"||v==="FALSE"||v==="False") return "No";
   return "--";
 };
- 
+
 function renderInfo() {
   const m=latestBusData||{}, f=latestFijoData||{};
   const movilVel=(m.speed_kmh!==undefined&&isFinite(Number(m.speed_kmh)))
@@ -468,12 +465,12 @@ function renderInfo() {
 }
 function openInfo()  {infoOpen=true;  renderInfo(); infoOverlay.style.display="flex";  infoOverlay.setAttribute("aria-hidden","false"); }
 function closeInfo() {infoOpen=false; infoOverlay.style.display="none"; infoOverlay.setAttribute("aria-hidden","true"); }
- 
+
 document.getElementById("btnInfo").addEventListener("click",  e=>{ e.preventDefault(); openInfo(); });
 document.getElementById("infoClose").addEventListener("click", closeInfo);
 infoOverlay.addEventListener("click", e=>{ if(e.target===infoOverlay) closeInfo(); });
 window.addEventListener("keydown", e=>{ if(e.key==="Escape"&&infoOpen) closeInfo(); });
- 
+
 // ─── Iconos bus/parada ────────────────────────────────────────
 const stopIcon = L.divIcon({
   className:"", html:'<span class="stop-icon">🚮</span>',
@@ -485,7 +482,7 @@ const BUS_ICONS=[false,true].map(m=>L.divIcon({
 }));
 let busIsMoving=false;
 const busMarker=L.marker([0,0],{icon:BUS_ICONS[0]}).addTo(map);
- 
+
 function buildBusPopupHtml(speedKmh,isMoving) {
   return `<div class="popup-wrap">
     <span class="popup-title">🚚 Recolector</span>
@@ -495,7 +492,7 @@ function buildBusPopupHtml(speedKmh,isMoving) {
 }
 busMarker.bindPopup(buildBusPopupHtml(0,false));
 busMarker.on("popupopen",()=>{pauseFollowFor(); });
- 
+
 // ─── Auto-follow ──────────────────────────────────────────────
 const FOLLOW_RESUME_MS=60000;
 let followEnabled=true, followTimer=null, lastLatLng=null;
@@ -515,7 +512,7 @@ map.on("zoomstart",_userMove);
 map.on("zoom",     _userMove);
 map.on("dragstart",()=>{ if(!drawMode) pauseFollowFor(); });
 map.on("movestart",_userMove);
- 
+
 // ─── Ruta verde (ancho de calle; solo los últimos 1000 m, con atenuación) ───
 const trailLatLngs=[];
 const TRAIL_KEEP_M=1000, FADE1_M=350, FADE2_M=700;   // 0-350 m nítida · 350-700 m media · 700-1000 m tenue · >1000 m se elimina
@@ -532,7 +529,7 @@ const trailMid =L.polyline([],mkStyle(0.50)).addTo(map);
 const trailLine=L.polyline([],mkStyle(0.85)).addTo(map);
 const trailHead=L.polyline([],mkStyle(0.85)).addTo(map);
 let trailVisible=true, _renderQueued=false, _trailDirty=false;
- 
+
 function renderTrail(){          // recorta a 1000 m y reparte la línea en 3 tramos con distinta opacidad
   _renderQueued=false;
   const a=trailLatLngs, n=a.length;
@@ -560,7 +557,7 @@ setInterval(()=>{
   try{ localStorage.setItem(TRAIL_KEY,JSON.stringify({t:Date.now(),
     p:trailLatLngs.slice(-600).map(q=>[+q[0].toFixed(6),+q[1].toFixed(6)])})); }catch(e){}
 },15000);
- 
+
 // Grosor en metros reales: la línea ocupa el ancho de la calle a cualquier zoom (como Google Maps)
 function updateTrailWeight(){
   const lat=lastLatLng?lastLatLng[0]:map.getCenter().lat;
@@ -570,7 +567,7 @@ function updateTrailWeight(){
 }
 map.on("zoomend",updateTrailWeight);
 updateTrailWeight();
- 
+
 document.getElementById("btnToggleTrail").addEventListener("click",e=>{
   trailVisible=!trailVisible;
   const layers=[trailOld,trailMid,trailLine,trailHead];
@@ -583,7 +580,7 @@ document.getElementById("btnToggleTrail").addEventListener("click",e=>{
     e.target.textContent="🔴 Recorrido: No";
   }
 });
- 
+
 // ─── Util ─────────────────────────────────────────────────────
 function haversineMeters(lat1,lon1,lat2,lon2) {
   const R=6371000,toRad=x=>x*Math.PI/180;
@@ -604,12 +601,12 @@ function formatETA(sec) {
 }
 const ema  = (p,x,a) => p==null?x:a*x+(1-a)*p;
 const ema2 = (p,x,a) => !p?x:[ema(p[0],x[0],a),ema(p[1],x[1],a)];
- 
+
 // ─── ETA ──────────────────────────────────────────────────────
 const ROUTE_FACTOR=1.45,ETA_BIAS_SEC=45,DEFAULT_SPEED_KMH=4.5;
 const SPEED_ALPHA=0.35,MIN_USABLE_SPEED_KMH=2.0,MAX_REASONABLE_SPEED_KMH=55;
 let speedSmoothed=null,lastGoodSpeed=null;
- 
+
 function pickSpeedKmh(rawSpeedKmh) {
   let s=Number(rawSpeedKmh||0);
   if(!isFinite(s)||s<0) s=0;
@@ -623,13 +620,13 @@ function pickSpeedKmh(rawSpeedKmh) {
 function calcEtaSeconds(distStraightM,usedSpeedKmh) {
   return (distStraightM*ROUTE_FACTOR/Math.max(usedSpeedKmh/3.6,0.1))+ETA_BIAS_SEC;
 }
- 
+
 // ─── Snap a calle ─────────────────────────────────────────────
 const SNAP_MIN_MOVE_M=10,SNAP_MAX_ERR_M=35,SNAP_TTL_MS=15000;
 const snapCache=new Map();
 let lastSnapRaw=null,lastSnapped=null,snapPending=false;
 const snapKey=(lat,lon)=>`${lat.toFixed(5)},${lon.toFixed(5)}`;
- 
+
 async function snapToRoad(lat,lon) {
   const k=snapKey(lat,lon);
   if(snapCache.has(k)) return snapCache.get(k);
@@ -672,14 +669,14 @@ function pickRoadPoint(rawLat,rawLon) {
   }
   return [rawLat,rawLon];
 }
- 
+
 // ─── Filtro / ruta ────────────────────────────────────────────
 const SMOOTH_ALPHA_POS = 0.50;
 const MIN_ADD_DIST_M   = 8;     // distancia mínima entre muestras que se envían a OSRM
 const MAX_JUMP_DRAW_M  = 300;   // carretera a 90 km/h: ~75 m por muestra
 const STOPPED_SPEED_KMH = 3.0;  // por debajo se considera detenido
 let   trailFrozen = false;      // detenido: no se dibuja nada (sin rayas por ruido GPS)
- 
+
 let lastStableDraw=null,lastSmoothed=null,jumpRejects=0;
 function stablePoint(lat,lon) {
   const p=[lat,lon];
@@ -691,14 +688,14 @@ function stablePoint(lat,lon) {
   jumpRejects=0;
   lastStableDraw=p; return p;
 }
- 
+
 // ─── Map-matching OSRM: la línea y el punto van SOLO sobre calles, nunca con GPS crudo ───
 const GRAPH_MS=500;     // la página procesa cada dato que llega, como máximo cada 0.5 s (punto, popups, ETA)
 const ROUTE_MS=1000;    // cada cuánto se consulta OSRM para alargar la línea (500 = el doble de datos móviles)
 const MATCH_MAX_PTS=4, MATCH_RADIUS=20;
 let pendRaw=[], routePending=false, routeFails=0, routePausedUntil=0, lastRouteAt=0, routeRejects=0, routeResyncs=0;
 let snapMark=null, busDisp=null, lastForcedSnapAt=0;
- 
+
 function pathLenM(a){ let s=0; for(let i=1;i<a.length;i++) s+=haversineMeters(a[i-1][0],a[i-1][1],a[i][0],a[i][1]); return s; }
 function distToSegM(p,a,b){   // distancia (m) de p al segmento a–b
   const kx=111320*Math.cos(a[0]*Math.PI/180), ky=110574;
@@ -707,7 +704,7 @@ function distToSegM(p,a,b){   // distancia (m) de p al segmento a–b
   return Math.hypot(px-t*bx,py-t*by);
 }
 function distToPathM(q,path){ let m=1e9; for(let i=1;i<path.length;i++){ const d=distToSegM(q,path[i-1],path[i]); if(d<m) m=d; } return m; }
- 
+
 async function matchSegment(anchor,pts){
   const coords=(anchor?[anchor]:[]).concat(pts);
   if(coords.length<2) return null;
@@ -734,7 +731,7 @@ async function matchSegment(anchor,pts){
   if(g.some(q=>distToPathM(q,coords)>lim)) return null;                   // se metió por otra calle / calzada
   return {geom:g,end,raw};
 }
- 
+
 function extendTrail(){
   const gap=_netSlowNow()?4000:ROUTE_MS;
   if(routePending||!pendRaw.length||navigator.onLine===false||Date.now()<routePausedUntil||Date.now()-lastRouteAt<gap) return;
@@ -761,7 +758,7 @@ function extendTrail(){
     .catch(()=>{ if(++routeFails>=5){ routeFails=0; routePausedUntil=Date.now()+60000; } })   // sin red: NO se dibuja a ciegas
     .finally(()=>{ routePending=false; });
 }
- 
+
 // Punto del vehículo centrado en la calle: GPS crudo + desfase calculado por OSRM (se mueve a 0.5 s)
 function displayPos(lat,lon){
   const m=snapMark;
@@ -780,7 +777,7 @@ function setHead(){   // une el final de la línea con el punto (ambos sobre la 
   const h=trailLatLngs[n-1];
   trailHead.setLatLngs(haversineMeters(h[0],h[1],busDisp[0],busDisp[1])<=60?[h,busDisp]:[]);
 }
- 
+
 let slowSince=0, fastSince=0;
 function updateGreenTrailForced(rawLat, rawLon, rawSpeedKmh) {
   const speedKmh=Number(rawSpeedKmh||0), now=Date.now();
@@ -801,7 +798,7 @@ function updateGreenTrailForced(rawLat, rawLon, rawSpeedKmh) {
   extendTrail();
   setHead();
 }
- 
+
 // ─── Contenedores ───────────────────────────────────
 const stops = [
   {id:"p1",  name:"Contenedor 1",  lat:0.2308,   lon:-78.25777},
@@ -835,7 +832,7 @@ const stops = [
 ];
 const stopMarkers=new Map();
 let activeStopId=null;
- 
+
 function buildStopPopupHtml(name, etaTxt="--", distTxt="--", speedTxt="--") {
   return `<div class="stop-popup-wrap">
     <span class="stop-popup-title">${name}</span>
@@ -844,7 +841,7 @@ function buildStopPopupHtml(name, etaTxt="--", distTxt="--", speedTxt="--") {
     <span class="stop-popup-line">🚀 Velocidad: ${speedTxt}</span>
   </div>`;
 }
- 
+
 function buildSolicitudPopupHtml(fbKey, esMio, color, etaTxt="--", distTxt="--", speedTxt="--") {
   const cancelBtn = esMio
     ? `<span class="stop-popup-line" style="text-align:center;display:block;margin-top:4px;">
@@ -863,7 +860,7 @@ function buildSolicitudPopupHtml(fbKey, esMio, color, etaTxt="--", distTxt="--",
     ${cancelBtn}
   </div>`;
 }
- 
+
 let lastBusInfo=null;
 function stopPopupHtml(s){
   const i=lastBusInfo, t=`🗑️ ${s.name}`;
@@ -884,12 +881,12 @@ stops.forEach(s=>{
   m.on("popupclose",()=>{ if(activeStopId===s.id) activeStopId=null; });
   stopMarkers.set(s.id,m);
 });
- 
+
 // ─── NodoFijo ─────────────────────────────────────────────────
 const NODO_FIJO_ID="NodoFijo";
 let nodoFijoMarker=null;
 let nodoFijoLast={dist_m:null,eta_s:null};
- 
+
 function buildNodoFijoPopupHtml(speedKmh) {
   const distTxt=(isFinite(nodoFijoLast.dist_m)&&nodoFijoLast.dist_m>=0)?formatDist(nodoFijoLast.dist_m):"--";
   const etaTxt =(isFinite(nodoFijoLast.eta_s) &&nodoFijoLast.eta_s >0) ?formatETA(nodoFijoLast.eta_s) :"--";
@@ -904,7 +901,7 @@ function upsertNodoFijoMarker(lat,lon) {
     stopMarkers.set(NODO_FIJO_ID,nodoFijoMarker);
   } else nodoFijoMarker.setLatLng([lat,lon]);
 }
- 
+
 // ─── Estado bus ───────────────────────────────────────────────
 function setBusMovingState(isMoving) {
   if(busIsMoving===isMoving) return;
@@ -917,7 +914,7 @@ function setBusMovingState(isMoving) {
     el.textContent=isMoving?"Movimiento":"Detenido";
   }
 }
- 
+
 // ─── Firebase listeners (bus) ─────────────────────────────────
 onValue(ref(db,"NodoFijo"),snap=>{
   const d=snap.val(); if(!d) return;
@@ -936,7 +933,7 @@ onValue(ref(db,"Recolector/Otavalo/Vehiculo1"),snap=>{
   if(infoOpen) renderInfo();
   if(first) setTimeout(busTick,0); else scheduleTick();
 });
- 
+
 // ─── Aplica datos a UI y mapa ─────────────────────────────────
 function applyBusDataToUIAndMap(d) {
   const lat=Number(d.lat||0),lon=Number(d.lon||0);
@@ -956,10 +953,10 @@ function applyBusDataToUIAndMap(d) {
   else busMarker.bindPopup(ph);
   return {lat,lon,rawSpeedKmh,usedSpeedKmh};
 }
- 
+
 // ─── Loop 3 s ─────────────────────────────────────────────────
 let activeSolicitudPopupKey = null;
- 
+
 let _lastTickAt=0, _tickT=null;
 function scheduleTick(){   // procesa cada dato al llegar (máx. 1 por segundo) para que la línea vaya en tiempo real
   const w=GRAPH_MS-(Date.now()-_lastTickAt);
@@ -972,10 +969,10 @@ function busTick(){
   const info=applyBusDataToUIAndMap(latestBusData);
   if(!info) return;
   lastBusInfo=info;
- 
+
   // ✅ Pasar velocidad cruda al trail para que detecte reposo
   updateGreenTrailForced(info.lat, info.lon, info.rawSpeedKmh);
- 
+
   // Contenedores / NodoFijo
   if(activeStopId){
     if(activeStopId===NODO_FIJO_ID&&nodoFijoMarker){
@@ -986,10 +983,10 @@ function busTick(){
       if(s&&m) m.setPopupContent(stopPopupHtml(s));
     }
   }
- 
+
   if(busMarker.isPopupOpen())
     busMarker.setPopupContent(buildBusPopupHtml(info.rawSpeedKmh,busIsMoving));
- 
+
   if(activeSolicitudPopupKey){
     const item=marcadoresActivos.get(activeSolicitudPopupKey);
     if(item && item.marker.isPopupOpen()){
@@ -1001,15 +998,15 @@ function busTick(){
 }
 setInterval(()=>{ if(Date.now()-_lastTickAt>=2000) busTick(); },1000);   // respaldo: el ritmo real lo marca cada dato que llega
 document.addEventListener("visibilitychange",()=>{ if(!document.hidden) busTick(); });
- 
+
 // ═══════════════════════════════════════════════════════════════
 // ─── Solicitudes compartidas en tiempo real (Firebase) ────────
 // ═══════════════════════════════════════════════════════════════
 const SOLICITUD_TTL_MS = 10 * 60 * 1000;
 const solicitudesRef   = ref(db, "Solicitudes");
- 
+
 const marcadoresActivos = new Map();
- 
+
 const COLORES_POOL = [
   "#e74c3c","#e67e22","#f1c40f","#2ecc71","#1abc9c",
   "#3498db","#9b59b6","#e91e63","#00bcd4","#ff5722",
@@ -1021,24 +1018,24 @@ function colorForKey(key) {
   for(let i=0;i<key.length;i++) hash=(hash*31+key.charCodeAt(i))>>>0;
   return COLORES_POOL[hash % COLORES_POOL.length];
 }
- 
+
 function formatCountdown(ms) {
   if(ms<=0) return "0:00";
   const s=Math.ceil(ms/1000);
   const m=Math.floor(s/60), ss=s%60;
   return `${m}:${String(ss).padStart(2,"0")}`;
 }
- 
+
 function dibujarSolicitudEnMapa(fbKey, data) {
   if(marcadoresActivos.has(fbKey)) return;
- 
+
   const { lat, lon, expireAt, uid } = data;
   const remaining = expireAt - Date.now();
   if(remaining <= 0) return;
- 
+
   const color  = colorForKey(fbKey);
   const esMio  = (uid === MY_UID);
- 
+
   const html = `
     <div style="position:relative;width:52px;height:52px;">
       <div class="solicitud-ring" style="background:${color};top:50%;left:50%;"></div>
@@ -1047,16 +1044,16 @@ function dibujarSolicitudEnMapa(fbKey, data) {
         ${formatCountdown(remaining)}
       </div>
     </div>`;
- 
+
   const icon = L.divIcon({
     className:"", html,
     iconSize:[52,52], iconAnchor:[26,26]
   });
- 
+
   const marker = L.marker([lat,lon],{icon,zIndexOffset:500}).addTo(map);
- 
+
   marker.bindPopup(solicitudPopupHtml(fbKey, esMio, color, lat, lon));
- 
+
   marker.on("popupopen", ()=>{
     activeSolicitudPopupKey = fbKey;
     pauseFollowFor();
@@ -1065,19 +1062,19 @@ function dibujarSolicitudEnMapa(fbKey, data) {
   marker.on("popupclose", ()=>{
     if(activeSolicitudPopupKey === fbKey) activeSolicitudPopupKey = null;
   });
- 
+
   const tickerId = setInterval(()=>{
     const rem = expireAt - Date.now();
     const el  = document.getElementById(`stimer-${fbKey}`);
     if(el) el.textContent = formatCountdown(rem);
     if(rem <= 0) clearInterval(tickerId);
   },1000);
- 
+
   const autoExpire = setTimeout(()=>{ quitarMarcador(fbKey); }, remaining+500);
- 
+
   marcadoresActivos.set(fbKey, { marker, tickerId, autoExpire, lat, lon, esMio, color });
 }
- 
+
 function quitarMarcador(fbKey) {
   const item = marcadoresActivos.get(fbKey);
   if(!item) return;
@@ -1087,7 +1084,7 @@ function quitarMarcador(fbKey) {
   if(map.hasLayer(item.marker)) map.removeLayer(item.marker);
   if(activeSolicitudPopupKey===fbKey) activeSolicitudPopupKey=null;
 }
- 
+
 onValue(solicitudesRef, snap => {
   const data = snap.val() || {};
   const claves = new Set(Object.keys(data));
@@ -1098,7 +1095,7 @@ onValue(solicitudesRef, snap => {
     if(!claves.has(k)) quitarMarcador(k);
   }
 });
- 
+
 setInterval(async ()=>{
   try {
     const snap = await new Promise(res=>onValue(solicitudesRef,res,{onlyOnce:true}));
@@ -1110,24 +1107,24 @@ setInterval(async ()=>{
     }
   } catch(e){}
 },30000);
- 
+
 async function crearSolicitud(lat, lon) {
   const expireAt = Date.now() + SOLICITUD_TTL_MS;
   const newRef   = push(solicitudesRef);
   await set(newRef, { lat, lon, expireAt, uid: MY_UID });
   showToast("✅ Punto Agregado", 3000);
 }
- 
+
 window._cancelarSolicitud = async function(fbKey) {
   map.closePopup();
   await remove(ref(db,`Solicitudes/${fbKey}`));
 };
- 
+
 let drawMode=false;
 const btnDibujar = document.getElementById("btnDibujar");
 const drawHint   = document.getElementById("drawHint");
 const mapEl      = document.getElementById("map");
- 
+
 function setDraw(on) {
   drawMode=on;
   btnDibujar.textContent=on?"📊 Cancelar":"📊 Calcular";
@@ -1137,18 +1134,16 @@ function setDraw(on) {
   map.scrollWheelZoom[on?"disable":"enable"]();
   if(on) pauseFollowFor();
 }
- 
+
 btnDibujar.addEventListener("click", ()=>setDraw(!drawMode));
- 
+
 map.on("click", async e=>{
   if(!drawMode) return;
   setDraw(false);
   await crearSolicitud(e.latlng.lat, e.latlng.lng);
 });
- 
+
 window.addEventListener("keydown", e=>{ if(e.key==="Escape"&&drawMode) setDraw(false); });
 </script>
 </body>
 </html>
- 
-Claude terminó la respuesta
