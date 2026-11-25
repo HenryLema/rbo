@@ -74,7 +74,7 @@
       touch-action: manipulation;
       -webkit-tap-highlight-color: transparent;
     }
-    button.chip:active { background: rgba(210,210,210,.95); transform: scale(.97); }
+    button.chip:active { background: rgba(210,210,210,.95); }
     button.chip:disabled {
       opacity: 0.5;
       cursor: not-allowed;
@@ -146,27 +146,18 @@
       white-space: normal;
     }
 
-    @keyframes pulse-ring {
-      0%   { transform: translate(-50%,-50%) scale(0.7); opacity: 0.45; }
-      70%  { transform: translate(-50%,-50%) scale(1.55); opacity: 0.12; }
-      100% { transform: translate(-50%,-50%) scale(0.7); opacity: 0.45; }
-    }
-    @keyframes pulse-core {
-      0%,100% { transform: translate(-50%,-50%) scale(1);    opacity: 0.92; }
-      50%      { transform: translate(-50%,-50%) scale(0.82); opacity: 0.70; }
-    }
     .solicitud-ring {
       width: 52px; height: 52px;
       border-radius: 50%;
       position: absolute;
-      animation: pulse-ring 1.4s ease-in-out infinite;
+      transform: translate(-50%,-50%); opacity: .35;
       pointer-events: none;
     }
     .solicitud-core {
       width: 22px; height: 22px;
       border-radius: 50%;
       position: absolute;
-      animation: pulse-core 1.4s ease-in-out infinite;
+      transform: translate(-50%,-50%);
       cursor: pointer;
     }
     .solicitud-timer {
@@ -380,7 +371,8 @@ document.addEventListener("visibilitychange", () => {
 
 // ─── Mapa ─────────────────────────────────────────────────────
 const map = L.map("map", {
-  zoomControl:false, tap:true, tapTolerance:15, preferCanvas:true
+  zoomControl:false, tap:true, tapTolerance:15, preferCanvas:true,
+  zoomAnimation:false, fadeAnimation:false, markerZoomAnimation:false, inertia:false
 }).setView([0.23299010950077462,-78.26316758796887],14);
 
 L.Popup.mergeOptions({closeButton:true});
@@ -408,14 +400,18 @@ document.getElementById("btnReload").addEventListener("click", async () => {
   location.reload();   // solo recarga la página (ya NO reinicia el ESP32)
 });
 // Reinicio remoto del ESP32 (equivale a pulsar RESET). Segundos (no ms) para caber en int de 32 bits del ESP32
-document.getElementById("btnRestart").addEventListener("click", async () => {
+let _rstBusy=false, _lastRst=0;
+document.getElementById("btnRestart").addEventListener("click", async e => {
+  if(_rstBusy) return;
   if(navigator.onLine===false){ showToast("❌ Sin conexión", 3000); return; }
-  if(Date.now()-(window._rstAt||0)<10000){ showToast("⏳ Espera unos segundos", 2000); return; }
-  window._rstAt=Date.now();
+  _rstBusy=true; e.currentTarget.disabled=true;
+  const btn=e.currentTarget;
+  setTimeout(()=>{ _rstBusy=false; btn.disabled=false; },10000);   // evita reinicios repetidos por toques seguidos
   try {
-    await set(ref(db,"Control/restart_ts"), Math.floor(Date.now()/1000));
-    showToast("🔁 Orden enviada: reinicia en ~3 s", 4000);
-  } catch(e) { showToast("❌ No se pudo enviar el reinicio", 3000); }
+    _lastRst=Math.max(Math.floor(Date.now()/1000),_lastRst+1);     // siempre distinto → el ESP32 detecta el cambio
+    await set(ref(db,"Control/restart_ts"), _lastRst);
+    showToast("🔁 Reinicio enviado", 3000);
+  } catch(err) { showToast("❌ No se pudo enviar el reinicio", 3000); }
 });
 
 // ─── Info modal ───────────────────────────────────────────────
@@ -475,10 +471,18 @@ const stopIcon = L.divIcon({
   className:"", html:'<span class="stop-icon">🚮</span>',
   iconSize:[36,36], iconAnchor:[18,18]
 });
-const arrowHtml=c=>`<div style="width:30px;height:30px;transform-origin:50% 50%"><svg viewBox="0 0 24 24" width="30" height="30"><polygon points="12,1 21,22 12,17 3,22" fill="${c}" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/></svg></div>`;
-const BUS_ICONS=["#cc0000","#008000"].map(c=>L.divIcon({className:"",html:arrowHtml(c),iconSize:[30,30],iconAnchor:[15,15]}));
+const BUS_ICONS=[false,true].map(m=>L.divIcon({
+  className:"",
+  html:`<div class="bus-arrow"><svg viewBox="0 0 24 24" width="30" height="30"><path d="M12 1L21 22L12 17L3 22Z" fill="${m?"#008000":"#cc0000"}" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/></svg></div>`,
+  iconSize:[30,30], iconAnchor:[15,15]
+}));
 let busIsMoving=false;
 const busMarker=L.marker([0,0],{icon:BUS_ICONS[0]}).addTo(map);
+let busHeading=0;
+function applyBusHeading(){   // gira la flecha hacia donde avanza (sin recrear el icono)
+  const el=busMarker.getElement&&busMarker.getElement(), a=el&&el.firstChild;
+  if(a) a.style.transform=`rotate(${busHeading}deg)`;
+}
 
 function buildBusPopupHtml(speedKmh,isMoving) {
   return `<div class="popup-wrap">
@@ -495,13 +499,13 @@ const FOLLOW_RESUME_MS=60000;
 let followEnabled=true, followTimer=null, lastLatLng=null;
 // Los movimientos hechos por el propio código NO deben pausar el seguimiento
 let progMove=false, progTimer=null;
-function progView(fn){ progMove=true; clearTimeout(progTimer); fn(); progTimer=setTimeout(()=>{ progMove=false; },900); }
+function progView(fn){ progMove=true; try{ fn(); } finally { progMove=false; } }
 function pauseFollowFor(ms=FOLLOW_RESUME_MS) {
   followEnabled=false;
   if(followTimer) clearTimeout(followTimer);
   followTimer=setTimeout(()=>{
     followEnabled=true;
-    if(lastLatLng) progView(()=>map.setView(lastLatLng,map.getZoom(),{animate:true,duration:0.6}));
+    if(lastLatLng) progView(()=>map.setView(lastLatLng,map.getZoom(),{animate:false}));
   },ms);
 }
 const _userMove=()=>{ if(!progMove) pauseFollowFor(); };
@@ -512,7 +516,8 @@ map.on("movestart",_userMove);
 
 // ─── Ruta verde ───────────────────────────────────────────────
 const trailLatLngs=[], MAX_POINTS=3000, ctrl=[];
-const TRAIL_STYLE={color:"green",weight:8,opacity:0.6,smoothFactor:1,lineCap:"butt",lineJoin:"round",dashArray:"10 7",interactive:false};
+const TRAIL_STYLE={color:"#008000",weight:8,opacity:0.6,smoothFactor:1,lineCap:"butt",lineJoin:"round",dashArray:"10 7",interactive:false};
+const ROAD_W_M=9;   // ancho de calle que cubre la línea (m)
 // Restaura el recorrido guardado (recarga o pestaña descartada por el celular)
 const TRAIL_KEY="rbo_trail_v6", TRAIL_MAX_AGE_MS=60*60*1000;
 try{
@@ -523,6 +528,15 @@ try{
 }catch(e){}
 const trailLine=L.polyline(trailLatLngs,TRAIL_STYLE).addTo(map);
 const trailHead=L.polyline([],          TRAIL_STYLE).addTo(map);
+// El grosor sigue el zoom: la línea cubre ~ROAD_W_M metros (todo el ancho de la vía, como Google Maps)
+function updateTrailStyle(){
+  const mpp=156543.03392*Math.cos(map.getCenter().lat*Math.PI/180)/Math.pow(2,map.getZoom());
+  const w=Math.max(3,Math.min(40,ROAD_W_M/mpp));
+  const st={weight:w,dashArray:Math.max(6,Math.round(w*1.1))+" "+Math.max(4,Math.round(w*0.7))};
+  trailLine.setStyle(st); trailHead.setStyle(st);
+}
+map.on("zoomend",updateTrailStyle);
+updateTrailStyle();
 let _trailDirty=false;
 setInterval(()=>{
   if(!_trailDirty) return;
@@ -657,107 +671,153 @@ function pushTrail(latLng) {
     if(trailVisible) trailLine.setLatLngs(trailLatLngs);
   } else if(trailVisible) trailLine.addLatLng(latLng);
 }
-// ─── Ruta SOLO sobre calles: OSRM "match" (map-matching) + cola local entre consultas ───
-const GRAPH_MS=500;                          // grafica FORZADO cada 0.5 s
-const MATCH_MS=2500, MATCH_SLOW_MS=6000;     // consulta a OSRM (red normal / lenta)
-const BUF_MAX=40, SAMPLE_MIN_M=4, ROAD_W_M=8;
-let buf=[], matchPending=false, matchFails=0, matchPausedUntil=0, lastMatchAt=0;
-let anchorPt=trailLatLngs.length?trailLatLngs[trailLatLngs.length-1]:null;
-let roadDir=null, busHeading=0;
-
-// Línea discontinua que cubre el ancho de la calle (ROAD_W_M en metros → píxeles según el zoom)
-function applyTrailWeight(){
-  const res=156543.03*Math.cos(0.233*Math.PI/180)/Math.pow(2,map.getZoom());
-  const w=Math.max(4,Math.min(34,ROAD_W_M/res));
-  const st={weight:w,dashArray:`${Math.round(Math.max(8,w*1.1))} ${Math.round(Math.max(6,w*0.7))}`};
-  trailLine.setStyle(st); trailHead.setStyle(st);
+// ─── Curvas suaves (Bézier cuadrática por puntos medios, 100 % local, sin red) ───
+const BEZ_N=5, GAP_BREAK_M=250;
+const _mid=(a,b)=>[(a[0]+b[0])/2,(a[1]+b[1])/2];
+function flushTail(){            // cierra la línea exactamente en el último punto de control
+  if(!ctrl.length) return;
+  const c=ctrl[ctrl.length-1], l=trailLatLngs[trailLatLngs.length-1];
+  if(!l||haversineMeters(l[0],l[1],c[0],c[1])>0.5) pushTrail(c);
+  ctrl.length=0; ctrl.push(c);
 }
-map.on("zoomend",applyTrailWeight); applyTrailWeight();
-
-const dirOf=(a,b)=>[(b[1]-a[1])*111320*Math.cos(a[0]*Math.PI/180),(b[0]-a[0])*110574];   // [este,norte] en metros
-function lastRoadDir(){                       // dirección de la calle al final del tramo confirmado
-  const n=trailLatLngs.length; if(n<2) return null;
-  const h=trailLatLngs[n-1];
-  for(let i=n-2;i>=0&&i>=n-12;i--){
-    const q=trailLatLngs[i];
-    if(haversineMeters(q[0],q[1],h[0],h[1])>=3){ const v=dirOf(q,h), l=Math.hypot(v[0],v[1]); return [v[0]/l,v[1]/l]; }
+function addControl(c){
+  if(!ctrl.length){ ctrl.push(c); pushTrail(c); return; }
+  const prev=ctrl[ctrl.length-1];
+  if(haversineMeters(prev[0],prev[1],c[0],c[1])>GAP_BREAK_M){   // hueco de datos: unir con recta, sin curva falsa
+    flushTail(); ctrl.length=0; ctrl.push(c); pushTrail(c); return;
   }
-  return null;
+  ctrl.push(c);
+  if(ctrl.length>3) ctrl.shift();
+  const n=ctrl.length;
+  const S = n===2 ? ctrl[0] : _mid(ctrl[n-3],ctrl[n-2]);
+  const C = ctrl[n-2], E=_mid(ctrl[n-2],ctrl[n-1]);
+  for(let i=1;i<=BEZ_N;i++){
+    const t=i/BEZ_N,u=1-t;
+    pushTrail([u*u*S[0]+2*u*t*C[0]+t*t*E[0], u*u*S[1]+2*u*t*C[1]+t*t*E[1]]);
+  }
 }
-roadDir=lastRoadDir();
-
-function setBusHeading(deg){
-  busHeading=deg;
-  const el=busMarker.getElement();
-  if(el&&el.firstChild) el.firstChild.style.transform=`rotate(${deg}deg)`;
+function stablePoint(lat,lon) {
+  const p=[lat,lon];
+  if(!lastStableDraw){lastStableDraw=p;return p;}
+  if(haversineMeters(lastStableDraw[0],lastStableDraw[1],p[0],p[1])>MAX_JUMP_DRAW_M){
+    // Glitch aislado de GPS: se ignora. Si se repite 3 ciclos seguidos, es movimiento real.
+    if(++jumpRejects<3) return lastStableDraw;
+    lastSmoothed=null;
+  }
+  jumpRejects=0;
+  lastStableDraw=p; return p;
 }
 
-// Map-matching: devuelve la geometría REAL de las calles recorridas (o null si no coincide con ninguna calle)
-async function matchWindow(a,win){
-  const all=(a?[{lat:a[0],lon:a[1],r:8,c:-1}]:[]).concat(win.map(s=>({lat:s.lat,lon:s.lon,r:25,c:s.c})));
-  const hasB=all.some(s=>s.c>=0);
-  // bearings ±60° = solo calles en el sentido de marcha (elige la calzada correcta en la Panamericana)
-  const url=`https://router.project-osrm.org/match/v1/driving/${all.map(s=>s.lon.toFixed(6)+","+s.lat.toFixed(6)).join(";")}`
-    +`?geometries=geojson&overview=full&gaps=ignore&radiuses=${all.map(s=>s.r).join(";")}`
-    +(hasB?`&bearings=${all.map(s=>s.c>=0?(Math.round(s.c)%360)+",60":"").join(";")}`:"");
-  const ac=new AbortController(), to=setTimeout(()=>ac.abort(),6000);
+// ─── Tramos por calle (OSRM): la línea y la flecha SOLO usan geometría de calles ───
+const GRAPH_MS=500;   // la página grafica FORZADO cada 0.5 s
+let routePending=false, routeFails=0, routePausedUntil=0, lastRouteAt=0, routeRejects=0;
+function bearingDeg(a,b){
+  const r=Math.PI/180, y=Math.sin((b[1]-a[1])*r)*Math.cos(b[0]*r),
+        x=Math.cos(a[0]*r)*Math.sin(b[0]*r)-Math.sin(a[0]*r)*Math.cos(b[0]*r)*Math.cos((b[1]-a[1])*r);
+  return Math.round((Math.atan2(y,x)/r+360)%360);
+}
+function distToSegM(p,a,b){   // distancia (m) de p al segmento a–b
+  const kx=111320*Math.cos(a[0]*Math.PI/180), ky=110574;
+  const px=(p[1]-a[1])*kx, py=(p[0]-a[0])*ky, bx=(b[1]-a[1])*kx, by=(b[0]-a[0])*ky;
+  const l2=bx*bx+by*by; let t=l2?(px*bx+py*by)/l2:0; t=Math.max(0,Math.min(1,t));
+  return Math.hypot(px-t*bx,py-t*by);
+}
+async function routeSegment(a,b,courseDeg,startRaw){
+  const br=courseDeg>=0?Math.round(courseDeg)%360:bearingDeg(a,b);
+  const ac=new AbortController(), to=setTimeout(()=>ac.abort(),4000);
   try{
-    const r=await fetch(url,{signal:ac.signal});
-    if(r.status===400) return null;            // NoMatch: el trazo no está sobre ninguna calle
+    // Origen ya está sobre la calle (radio 12 m, sin rumbo); destino = GPS: radio 30 m y solo calles en el sentido de marcha ±50°
+    const rad=(startRaw?30:12)+";30", brg=(startRaw?br+",50":"")+";"+br+",50";
+    const r=await fetch(`https://router.project-osrm.org/route/v1/driving/${a[1]},${a[0]};${b[1]},${b[0]}?overview=full&geometries=geojson&alternatives=false&generate_hints=false&radiuses=${rad}&bearings=${brg}`,{signal:ac.signal});
+    if(r.status===400) return null;            // sin calle cercana en ese sentido: no es fallo de red
     if(!r.ok) throw 0;
-    const j=await r.json();
-    if(j.code!=="Ok"||!j.matchings||!j.matchings.length) return null;
-    const ok=(j.tracepoints||[]).filter(Boolean).length;
-    if(ok<Math.max(2,Math.ceil(all.length*0.6))) return null;
-    const pts=[]; j.matchings.forEach(m=>m.geometry.coordinates.forEach(c=>pts.push([c[1],c[0]])));
+    const rt=(await r.json())?.routes?.[0];
+    if(!rt) return null;
+    const pts=rt.geometry.coordinates.map(c=>[c[1],c[0]]);
+    const d=haversineMeters(a[0],a[1],b[0],b[1]), e=pts[pts.length-1];
+    if(rt.distance>d*1.4+25) return null;                          // desvío raro
+    if(haversineMeters(e[0],e[1],b[0],b[1])>30) return null;       // terminó lejos del vehículo
+    const lim=20+d*0.15;
+    if(pts.some(q=>distToSegM(q,a,b)>lim)) return null;           // se metió por una calle lateral
     return pts;
   } finally { clearTimeout(to); }
 }
-function requestMatch(){
-  if(matchPending||navigator.onLine===false||Date.now()<matchPausedUntil) return;
-  if(buf.length+(anchorPt?1:0)<2) return;
-  if(Date.now()-lastMatchAt<(_netSlowNow()?MATCH_SLOW_MS:MATCH_MS)) return;
-  matchPending=true; lastMatchAt=Date.now();
-  const n=buf.length, a=anchorPt;
-  matchWindow(a,buf.slice(0,n))
+function extendTrail(ref,p){
+  const sp=lastBusInfo?lastBusInfo.rawSpeedKmh:0;
+  const gap=_netSlowNow()?3500:(sp>=25?1000:2000);   // menos consultas a baja velocidad / red lenta (ahorra datos)
+  if(routePending||navigator.onLine===false||Date.now()<routePausedUntil||Date.now()-lastRouteAt<gap) return;
+  routePending=true; lastRouteAt=Date.now();
+  const c=Number(latestBusData&&latestBusData.course_deg);
+  const useCourse=isFinite(c)&&c>=0&&sp>=3;
+  const startRaw=trailLatLngs.length<=1;
+  routeSegment(ref,p,useCourse?c:-1,startRaw)
     .then(pts=>{
-      matchFails=0; buf.splice(0,n);
-      if(!pts||pts.length<2) return;           // sin coincidencia: se descartan (no se dibuja fuera de calles)
-      const adj=a&&haversineMeters(a[0],a[1],pts[0][0],pts[0][1])<20;
-      for(let i=adj?1:0;i<pts.length;i++) pushTrail(pts[i]);   // reemplaza la cola provisional por la calle real
-      anchorPt=pts[pts.length-1]; roadDir=lastRoadDir()||roadDir;
+      routeFails=0;
+      if(pts&&pts.length>1){
+        routeRejects=0;
+        if(startRaw){ trailLatLngs.length=0; if(trailVisible) trailLine.setLatLngs([]); pts.forEach(pushTrail); }  // reemplaza el 1.er punto crudo
+        else pts.slice(1).forEach(pushTrail);
+        ctrl.length=0; ctrl.push(pts[pts.length-1]);
+      } else if(++routeRejects>=8){ routeRejects=0; addControl(p); }   // calle que no existe en OSM: último recurso
     })
-    .catch(()=>{ if(++matchFails>=4){ matchFails=0; matchPausedUntil=Date.now()+30000; } })   // sin red: se conservan las muestras y se reintenta
-    .finally(()=>{ matchPending=false; });
+    .catch(()=>{ if(++routeFails>=5){ routeFails=0; routePausedUntil=Date.now()+60000; } })   // sin red: NO se dibuja a ciegas, se reintenta
+    .finally(()=>{ routePending=false; });
+}
+// Posición y rumbo SOBRE la línea (calle): final de la línea + prolongación corta en la dirección de la vía
+function roadPose(rawLat,rawLon){
+  const n=trailLatLngs.length; if(n<2) return null;
+  const h=trailLatLngs[n-1]; let a=null;
+  for(let i=n-2;i>=0&&i>=n-10;i--){ const q=trailLatLngs[i]; if(haversineMeters(q[0],q[1],h[0],h[1])>=4){ a=q; break; } }
+  if(!a) return {h,end:h,hdg:null};
+  const kx=111320*Math.cos(h[0]*Math.PI/180), ky=110574;
+  let ux=(h[1]-a[1])*kx, uy=(h[0]-a[0])*ky; const ul=Math.hypot(ux,uy); if(!ul) return {h,end:h,hdg:null}; ux/=ul; uy/=ul;
+  const hdg=Math.round((Math.atan2(ux,uy)*180/Math.PI+360)%360);
+  const wx=(rawLon-h[1])*kx, wy=(rawLat-h[0])*ky, t=wx*ux+wy*uy, lat=Math.abs(wx*uy-wy*ux);
+  let end=h;
+  if(t>1&&lat<=25){ const L=Math.min(t,45); end=[h[0]+uy*L/ky, h[1]+ux*L/kx]; }
+  return {h,end,hdg};
+}
+// Flecha: siempre sobre la calle; solo si no hay geometría de calle cerca usa el GPS crudo
+let lastPlaced=null;
+function placeBusMarker(info){
+  let pos=[info.lat,info.lon];
+  if(trailFrozen&&lastPlaced) pos=lastPlaced;                   // detenido: la flecha no tiembla
+  else {
+    const pz=roadPose(info.lat,info.lon);
+    if(pz&&haversineMeters(pz.h[0],pz.h[1],info.lat,info.lon)<60){ pos=pz.end; if(pz.hdg!=null) busHeading=pz.hdg; }
+    else { const c=Number(latestBusData&&latestBusData.course_deg); if(info.rawSpeedKmh>=3&&isFinite(c)&&c>=0) busHeading=c; }
+  }
+  lastPlaced=pos;
+  busMarker.setLatLng(pos); applyBusHeading();
+  if(!lastLatLng) progView(()=>map.setView(pos,16));
+  else if(followEnabled) progView(()=>map.panTo(pos,{animate:false}));
+  lastLatLng=pos;
 }
 
-// Se llama cada 0.5 s: guarda muestras, pide match cada ~2.5 s y devuelve posición/rumbo de la flecha
-function updateGreenTrailForced(lat,lon,speedKmh,course){
-  const moving=speedKmh>=STOPPED_SPEED_KMH, hasC=isFinite(course)&&course>=0;
-  const last=buf.length?[buf[buf.length-1].lat,buf[buf.length-1].lon]:anchorPt;
-  const dRef=last?haversineMeters(last[0],last[1],lat,lon):1e9;
-  // En reposo no se guardan muestras (el ruido GPS no genera rayas); sí si se aleja >35 m (marcha lenta real)
-  if(!last||(moving?dRef>=SAMPLE_MIN_M:dRef>=35)){
-    buf.push({lat,lon,c:(speedKmh>=8&&hasC)?course:-1});
-    if(buf.length>BUF_MAX) buf.splice(0,buf.length-BUF_MAX);
+// ✅ Trail: sin rayas en reposo y siempre sobre la calle
+let slowSince=0, fastSince=0;
+function updateGreenTrailForced(rawLat, rawLon, rawSpeedKmh) {
+  const speedKmh=Number(rawSpeedKmh||0), now=Date.now();
+  const ref=ctrl.length?ctrl[ctrl.length-1]:(trailLatLngs.length?trailLatLngs[trailLatLngs.length-1]:null);
+  const dRef=ref?haversineMeters(ref[0],ref[1],rawLat,rawLon):0;
+  const slow=speedKmh<STOPPED_SPEED_KMH;
+  if(slow){ fastSince=0; if(!slowSince) slowSince=now; } else { slowSince=0; if(!fastSince) fastSince=now; }
+  if(slowSince&&now-slowSince>=5000) trailFrozen=true;
+  if(trailFrozen&&((fastSince&&now-fastSince>=2500)||dRef>35)){ trailFrozen=false; lastSmoothed=null; }
+  if(ref&&(trailFrozen||(slow&&dRef<35))){
+    flushTail();
+    if(trailVisible&&trailLatLngs.length){ const l=trailLatLngs[trailLatLngs.length-1]; trailHead.setLatLngs([l,l]); }
+    lastSmoothed=null; return;
   }
-  requestMatch();
-  // Posición provisional SOBRE la calle: último punto confirmado + avance a lo largo de la calle
-  let pos=[lat,lon], ext=false;
-  if(anchorPt&&haversineMeters(anchorPt[0],anchorPt[1],lat,lon)<=80){
-    pos=anchorPt;
-    if(roadDir){
-      const v=dirOf(anchorPt,[lat,lon]), t=v[0]*roadDir[0]+v[1]*roadDir[1], off=Math.abs(v[0]*roadDir[1]-v[1]*roadDir[0]);
-      if(t>1&&t<=150&&off<=22){
-        pos=[anchorPt[0]+roadDir[1]*t/110574, anchorPt[1]+roadDir[0]*t/(111320*Math.cos(anchorPt[0]*Math.PI/180))]; ext=true;
-      }
-    }
+  const p0=stablePoint(rawLat,rawLon);
+  lastSmoothed=ema2(lastSmoothed,p0,speedKmh>=15?1:SMOOTH_ALPHA_POS);
+  const p=lastSmoothed;
+  if(!ref) addControl(p);
+  else if(haversineMeters(ref[0],ref[1],p[0],p[1])>=MIN_ADD_DIST_M) extendTrail(ref,p);
+  if(trailVisible&&trailLatLngs.length){
+    const pz=roadPose(rawLat,rawLon), h=trailLatLngs[trailLatLngs.length-1];
+    trailHead.setLatLngs(pz?[pz.h,pz.end]:[h,h]);
   }
-  if(trailVisible) trailHead.setLatLngs(ext?[anchorPt,pos]:[]);
-  let hd=busHeading;
-  if(speedKmh>=8&&hasC) hd=course;
-  else if(moving&&roadDir) hd=(Math.atan2(roadDir[0],roadDir[1])*180/Math.PI+360)%360;
-  return {pos,hd};
 }
 
 // ─── Contenedores ───────────────────────────────────
@@ -865,9 +925,7 @@ function upsertNodoFijoMarker(lat,lon) {
 
 // ─── Estado bus ───────────────────────────────────────────────
 function setBusMovingState(isMoving) {
-  if(busIsMoving===isMoving) return;
-  busIsMoving=isMoving;
-  busMarker.setIcon(BUS_ICONS[+isMoving]); setBusHeading(busHeading);
+  if(busIsMoving!==isMoving){ busIsMoving=isMoving; busMarker.setIcon(BUS_ICONS[+isMoving]); }
   const el=document.getElementById("busState");
   if(el){
     el.classList.toggle("moving", isMoving);
@@ -902,13 +960,7 @@ function applyBusDataToUIAndMap(d) {
   const rawSpeedKmh =Number(d.speed_kmh||0);
   const usedSpeedKmh=pickSpeedKmh(rawSpeedKmh);
   document.getElementById("hora").textContent=d.hora_ecuador??"--";
-  setBusMovingState(busIsMoving?rawSpeedKmh>=1.5:rawSpeedKmh>=3.0);
-  const tr=updateGreenTrailForced(lat,lon,rawSpeedKmh,Number(d.course_deg));
-  const busPos=tr.pos;                       // posición sobre la calle (OSRM match)
-  busMarker.setLatLng(busPos); setBusHeading(tr.hd);
-  if(!lastLatLng) progView(()=>map.setView(busPos,16));
-  else if(followEnabled) progView(()=>map.panTo(busPos,{animate:true,duration:0.4}));
-  lastLatLng=busPos;
+  setBusMovingState(rawSpeedKmh>=STOPPED_SPEED_KMH);
   const ph=buildBusPopupHtml(rawSpeedKmh,busIsMoving);
   if(busMarker.getPopup()) busMarker.setPopupContent(ph);
   else busMarker.bindPopup(ph);
@@ -927,8 +979,9 @@ function scheduleTick(){   // procesa cada dato al llegar (máx. 1 por segundo) 
 function busTick(){
   _lastTickAt=Date.now();
   if(!latestBusData) return;
-  if(Date.now()-lastDataAt>20000){      // el ESP32 dejó de enviar: no mostrar ETA ni estado viejos
-    lastBusInfo=null; busIsMoving=null;
+  if(Date.now()-lastDataAt>15000){            // el ESP32 dejó de enviar: no mostrar datos viejos como actuales
+    lastBusInfo=null;
+    if(busIsMoving){ busIsMoving=false; busMarker.setIcon(BUS_ICONS[0]); applyBusHeading(); }
     const el=document.getElementById("busState");
     if(el){ el.classList.remove("moving"); el.classList.add("stopped"); el.textContent="Sin datos"; }
     return;
@@ -936,7 +989,8 @@ function busTick(){
   const info=applyBusDataToUIAndMap(latestBusData);
   if(!info) return;
   lastBusInfo=info;
-
+  updateGreenTrailForced(info.lat, info.lon, info.rawSpeedKmh);
+  placeBusMarker(info);
 
   // Contenedores / NodoFijo
   if(activeStopId){
@@ -1111,4 +1165,4 @@ map.on("click", async e=>{
 window.addEventListener("keydown", e=>{ if(e.key==="Escape"&&drawMode) setDraw(false); });
 </script>
 </body>
-</html>
+    </html>
