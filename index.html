@@ -16,9 +16,16 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
   <style>
-    *, *::before, *::after { box-sizing: border-box; }
-    button { border: 0; font-family: inherit; }
-    .leaflet-popup-content-wrapper, .leaflet-popup-tip, .leaflet-bar { box-shadow: none; }
+    *, *::before, *::after {
+      box-sizing: border-box;
+      box-shadow: none !important;
+      text-shadow: none !important;
+      -webkit-box-shadow: none !important;
+      filter: none !important;
+      -webkit-filter: none !important;
+      border: none !important;
+      border-color: transparent !important;
+    }
 
     html, body {
       height: 100%; width: 100%;
@@ -95,10 +102,9 @@
     .busstate-pill.moving  { background: #008000; }
     .busstate-pill.stopped { background: #cc0000; }
 
-    .bus-arrow { width: 30px; height: 30px; }
-    .bus-arrow svg { display: block; }
-    .bus-arrow path { fill: #008000; }
-    .bus-arrow.stopped path { fill: #cc0000; }
+    .bus-arrow { display:block; }
+    .bus-arrow path { fill:#cc0000; stroke:#fff; stroke-width:1.5; }
+    .bus-arrow.moving path { fill:#008000; }
 
     .stop-icon {
       font-size: clamp(22px,4vw,32px);
@@ -144,7 +150,7 @@
       width: 52px; height: 52px;
       border-radius: 50%;
       position: absolute;
-      transform: translate(-50%,-50%); opacity: .3;
+      transform: translate(-50%,-50%);
       pointer-events: none;
     }
     .solicitud-core {
@@ -270,7 +276,7 @@
       <div class="chip">⏱️ Hora: <span id="hora" style="margin-left:3px">--</span></div>
       <div class="chip">🚦 Estado:&nbsp;<span id="busState" class="busstate-pill stopped">Detenido</span></div>
       <button id="btnReload"      class="chip">🔄 Recargar</button>
-      <button id="btnRestart"     class="chip">Reset ESP32</button>
+      <button id="btnRestart"     class="chip">🔁 Reset ESP32</button>
       <button id="btnToggleTrail" class="chip">🟢 Recorrido: Si</button>
       <button id="btnInfo"        class="chip">ℹ️ Info</button>
       <button id="btnDibujar"     class="chip">📊 Calcular</button>
@@ -392,17 +398,16 @@ document.getElementById("btnReload").addEventListener("click", async () => {
 
   location.reload();   // solo recarga la página (ya NO reinicia el ESP32)
 });
-// Reinicio remoto del ESP32 (equivale a pulsar RESET). Segundos (no ms) para caber en int de 32 bits del ESP32
+// Reinicio remoto del ESP32 (como pulsar RESET): sin confirmación ni mensajes. Segundos → cabe en int de 32 bits del ESP32
 document.getElementById("btnRestart").addEventListener("click", () => {
-  if(navigator.onLine===false) return;
-  set(ref(db,"Control/restart_ts"), Math.floor(Date.now()/1000)).catch(()=>{});   // sin confirmación ni mensajes
+  try { set(ref(db,"Control/restart_ts"), Math.floor(Date.now()/1000)); } catch(e) {}
 });
 
 // ─── Info modal ───────────────────────────────────────────────
 const infoOverlay = document.getElementById("infoOverlay");
 const infoMovilEl = document.getElementById("infoMovil");
 const infoFijoEl  = document.getElementById("infoFijo");
-let infoOpen=false, latestFijoData=null, latestBusData=null;
+let infoOpen=false, latestFijoData=null, latestBusData=null, lastDataAt=0;
 
 const safeNum    = (v,d=6) => { const n=Number(v); return isFinite(n)?n.toFixed(d):"--"; };
 const safeVal    = v => (v===undefined||v===null||v===""||
@@ -455,14 +460,13 @@ const stopIcon = L.divIcon({
   className:"", html:'<span class="stop-icon">🚮</span>',
   iconSize:[36,36], iconAnchor:[18,18]
 });
-const BUS_ICONS=[false,true].map(m=>L.divIcon({
-  className:"", html:`<div class="bus-arrow ${m?"moving":"stopped"}"><svg viewBox="0 0 24 24" width="30" height="30"><path d="M12 1 L22 22 L12 17 L2 22 Z" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/></svg></div>`,
-  iconSize:[30,30], iconAnchor:[15,15]
-}));
-let busHeading=0;
-function rotateBus(){ const el=busMarker.getElement(), a=el&&el.firstChild; if(a) a.style.transform=`rotate(${busHeading}deg)`; }
+const BUS_ICON=L.divIcon({className:"",
+  html:'<svg class="bus-arrow stopped" viewBox="0 0 24 24" width="30" height="30"><path d="M12 1 L21 22 L12 17 L3 22 Z"/></svg>',
+  iconSize:[30,30], iconAnchor:[15,15]});
 let busIsMoving=false;
-const busMarker=L.marker([0,0],{icon:BUS_ICONS[0]}).addTo(map);
+const busMarker=L.marker([0,0],{icon:BUS_ICON,zIndexOffset:1000}).addTo(map);
+const _arrowEl=()=>{ const e=busMarker.getElement(); return e&&e.firstChild; };
+function setArrow(deg){ const a=_arrowEl(); if(a) a.style.transform=`rotate(${deg}deg)`; }
 
 function buildBusPopupHtml(speedKmh,isMoving) {
   return `<div class="popup-wrap">
@@ -485,7 +489,7 @@ function pauseFollowFor(ms=FOLLOW_RESUME_MS) {
   if(followTimer) clearTimeout(followTimer);
   followTimer=setTimeout(()=>{
     followEnabled=true;
-    if(lastLatLng) progView(()=>map.setView(lastLatLng,map.getZoom(),{animate:true,duration:0.6}));
+    if(lastLatLng) progView(()=>map.setView(lastLatLng,map.getZoom(),{animate:false}));
   },ms);
 }
 const _userMove=()=>{ if(!progMove) pauseFollowFor(); };
@@ -494,60 +498,46 @@ map.on("zoom",     _userMove);
 map.on("dragstart",()=>{ if(!drawMode) pauseFollowFor(); });
 map.on("movestart",_userMove);
 
-// ─── Ruta verde (por tramos, discontinua, ancho ≈ calzada) ─────
-let trailVisible=true;
-const trailLatLngs=[], brk=[], MAX_POINTS=3000, ctrl=[];
+// ─── Ruta verde ───────────────────────────────────────────────
+const trailLatLngs=[], MAX_POINTS=3000, ctrl=[];
+const ROAD_W_M=9;   // ancho típico de calle/carril (m): la línea ocupa todo el ancho de la vía
+function roadStyle(){
+  const mpp=156543.03*Math.cos(0.23*Math.PI/180)/Math.pow(2,map.getZoom());
+  const w=Math.max(3,Math.min(36,ROAD_W_M/mpp));
+  return {color:"green",weight:w,opacity:0.8,smoothFactor:2,lineCap:"butt",lineJoin:"round",
+          dashArray:`${Math.round(w*1.6+6)} ${Math.round(w*0.9+4)}`,interactive:false};
+}
+const TRAIL_STYLE=roadStyle();
+// Restaura el recorrido guardado (recarga o pestaña descartada por el celular)
 const TRAIL_KEY="rbo_trail_v6", TRAIL_MAX_AGE_MS=60*60*1000;
-const TRAIL_STYLE={color:"green",opacity:0.85,smoothFactor:1.5,lineCap:"butt",lineJoin:"round",interactive:false,weight:6,dashArray:"10 6"};
 try{
   const sv=JSON.parse(localStorage.getItem(TRAIL_KEY)||"null");
-  if(sv&&Array.isArray(sv.p)&&Date.now()-sv.t<=TRAIL_MAX_AGE_MS){
+  if(sv&&Array.isArray(sv.p)&&Date.now()-sv.t<=TRAIL_MAX_AGE_MS)
     sv.p.forEach(q=>{ if(Array.isArray(q)&&isFinite(q[0])&&isFinite(q[1])) trailLatLngs.push(q); });
-    (sv.b||[]).forEach(i=>{ if(i>0&&i<trailLatLngs.length) brk.push(i); });
-    if(trailLatLngs.length&&brk[brk.length-1]!==trailLatLngs.length) brk.push(trailLatLngs.length);  // lo nuevo empieza en un tramo aparte
-  }
+  if(trailLatLngs.length) ctrl.push(trailLatLngs[trailLatLngs.length-1]);
 }catch(e){}
-function segsOf(){
-  const e=brk.concat([trailLatLngs.length]), out=[]; let s0=0;
-  for(const b of e){ if(b>s0) out.push(trailLatLngs.slice(s0,b)); s0=b; }
-  if(brk.length&&brk[brk.length-1]===trailLatLngs.length) out.push([]);
-  return out.length?out:[[]];
-}
-const trailLine=L.polyline(segsOf(),TRAIL_STYLE).addTo(map);
-const trailHead=L.polyline([],{...TRAIL_STYLE,dashArray:null}).addTo(map);
-function rebuildTrail(){ trailLine.setLatLngs(segsOf()); }
-function newSegment(){ if(trailLatLngs.length&&brk[brk.length-1]!==trailLatLngs.length){ brk.push(trailLatLngs.length); if(trailVisible) rebuildTrail(); } }
+const trailLine=L.polyline(trailLatLngs,TRAIL_STYLE).addTo(map);
+const trailHead=L.polyline([],          TRAIL_STYLE).addTo(map);
+map.on("zoomend",()=>{ const st=roadStyle(); trailLine.setStyle(st); trailHead.setStyle(st); });
 let _trailDirty=false;
-function pushTrail(ll){
-  trailLatLngs.push(ll); _trailDirty=true;
-  if(trailLatLngs.length>MAX_POINTS+200){
-    const cut=trailLatLngs.length-MAX_POINTS; trailLatLngs.splice(0,cut);
-    for(let i=brk.length-1;i>=0;i--){ brk[i]-=cut; if(brk[i]<=0) brk.splice(i,1); }
-    if(trailVisible) rebuildTrail();
-  } else if(trailVisible){ const r=trailLine.getLatLngs(); trailLine.addLatLng(ll,r[r.length-1]); }
-}
-// Ancho de la línea ≈ ancho de la calzada (8 m) según el zoom, como Google Maps
-function applyTrailStyle(){
-  const mpp=156543.03/Math.pow(2,map.getZoom()), w=Math.max(3,Math.min(18,Math.round(8/mpp)));
-  trailLine.setStyle({weight:w,dashArray:`${Math.round(w*1.6)} ${Math.round(w*0.9)}`});
-  trailHead.setStyle({weight:w});
-}
-map.on("zoomend",applyTrailStyle); applyTrailStyle();
 setInterval(()=>{
-  if(!_trailDirty) return; _trailDirty=false;
-  const off=Math.max(0,trailLatLngs.length-1500);
+  if(!_trailDirty) return;
+  _trailDirty=false;
   try{ localStorage.setItem(TRAIL_KEY,JSON.stringify({t:Date.now(),
-    p:trailLatLngs.slice(off).map(q=>[+q[0].toFixed(6),+q[1].toFixed(6)]),
-    b:brk.map(i=>i-off).filter(i=>i>0)})); }catch(e){}
+    p:trailLatLngs.slice(-1500).map(q=>[+q[0].toFixed(6),+q[1].toFixed(6)])})); }catch(e){}
 },15000);
+let trailVisible=true;
+
 document.getElementById("btnToggleTrail").addEventListener("click",e=>{
   trailVisible=!trailVisible;
   if(trailVisible){
-    rebuildTrail();
+
+    trailLine.setLatLngs(trailLatLngs);
     if(!map.hasLayer(trailLine)) trailLine.addTo(map);
     if(!map.hasLayer(trailHead)) trailHead.addTo(map);
     e.target.textContent="🟢 Recorrido: Si";
   } else {
+
     if(map.hasLayer(trailLine)) map.removeLayer(trailLine);
     if(map.hasLayer(trailHead)) map.removeLayer(trailHead);
     e.target.textContent="🔴 Recorrido: No";
@@ -600,13 +590,13 @@ const snapCache=new Map();
 let lastSnapRaw=null,lastSnapped=null,snapPending=false;
 const snapKey=(lat,lon)=>`${lat.toFixed(5)},${lon.toFixed(5)}`;
 
-async function snapToRoad(lat,lon,brg=-1) {
-  const k=snapKey(lat,lon)+"|"+(brg<0?"-":Math.round(brg/30));
+async function snapToRoad(lat,lon) {
+  const k=snapKey(lat,lon);
   if(snapCache.has(k)) return snapCache.get(k);
   const ac=new AbortController(), to=setTimeout(()=>ac.abort(),4000);
   let j;
   try{
-    const r=await fetch(`https://router.project-osrm.org/nearest/v1/driving/${lon},${lat}?number=1${brg>=0?`&bearings=${Math.round(brg)%360},60`:""}`,{signal:ac.signal});
+    const r=await fetch(`https://router.project-osrm.org/nearest/v1/driving/${lon},${lat}?number=1`,{signal:ac.signal});
     if(!r.ok) throw 0;
     j=await r.json();
   } finally { clearTimeout(to); }
@@ -619,8 +609,7 @@ let snapFails=0, snapPausedUntil=0;
 const _netSlowNow=()=>{ const c=navigator.connection||{}; return !!c.saveData||/(^|slow-)2g|3g/.test(c.effectiveType||""); };
 function maybeRequestSnap(rawLat,rawLon) {
   if(snapPending||_netSlowNow()||Date.now()<snapPausedUntil) return;
-  if(!lastSnapRaw) lastSnapRaw=[rawLat,rawLon];
-  if(haversineMeters(lastSnapRaw[0],lastSnapRaw[1],rawLat,rawLon)<SNAP_MIN_MOVE_M) return;
+  if(lastSnapRaw&&haversineMeters(lastSnapRaw[0],lastSnapRaw[1],rawLat,rawLon)<SNAP_MIN_MOVE_M) return;
   snapPending=true;
   const rLat=rawLat,rLon=rawLon;
   lastSnapRaw=[rawLat,rawLon];
@@ -655,7 +644,14 @@ let   trailFrozen           = false;  // cuando es true, no se agregan puntos
 
 let lastStableDraw=null,lastSmoothed=null,jumpRejects=0;
 
-
+function pushTrail(latLng) {
+  trailLatLngs.push(latLng);
+  _trailDirty=true;
+  if(trailLatLngs.length>MAX_POINTS){
+    trailLatLngs.splice(0,trailLatLngs.length-MAX_POINTS);
+    if(trailVisible) trailLine.setLatLngs(trailLatLngs);
+  } else if(trailVisible) trailLine.addLatLng(latLng);
+}
 // ─── Curvas suaves (Bézier cuadrática por puntos medios, 100 % local, sin red) ───
 const BEZ_N=5, GAP_BREAK_M=250;
 const _mid=(a,b)=>[(a[0]+b[0])/2,(a[1]+b[1])/2];
@@ -693,38 +689,29 @@ function stablePoint(lat,lon) {
   lastStableDraw=p; return p;
 }
 
-// ─── Tramos por calle (OSRM): la línea y la flecha SOLO sobre la calzada, nunca con GPS crudo ───
-const GRAPH_MS=500;    // la página grafica forzadamente cada 0.5 s (flecha, cola, popups, cálculos)
-const ROUTE_MS=1000;   // consulta a OSRM como máximo cada 1 s (ahorra datos); sube a 2000 si el plan es corto
-let routePending=false, routeFails=0, routePausedUntil=0, lastRouteAt=0, lastRouteOkAt=0, routeRejects=0;
+// ─── Tramos por calle (OSRM): la línea SOLO se dibuja con geometría de calles, nunca con GPS crudo ───
+const GRAPH_MS=500;     // dibujo forzado cada 0.5 s (cola + flecha)
+const CONFIRM_MS=2000;  // consulta a OSRM (forma real de la calle) como máximo cada 2 s (5 s en red lenta)
+const HEAD_MAX_M=35;    // si la cola supera 35 m se confirma antes (mín. 1 s entre consultas)
+let routePending=false, routeFails=0, routePausedUntil=0, lastRouteAt=0, routeRejects=0;
 function bearingDeg(a,b){
   const r=Math.PI/180, y=Math.sin((b[1]-a[1])*r)*Math.cos(b[0]*r),
         x=Math.cos(a[0]*r)*Math.sin(b[0]*r)-Math.sin(a[0]*r)*Math.cos(b[0]*r)*Math.cos((b[1]-a[1])*r);
   return Math.round((Math.atan2(y,x)/r+360)%360);
 }
-function distToSegM(p,a,b){
+function distToSegM(p,a,b){   // distancia (m) de p al segmento a–b
   const kx=111320*Math.cos(a[0]*Math.PI/180), ky=110574;
   const px=(p[1]-a[1])*kx, py=(p[0]-a[0])*ky, bx=(b[1]-a[1])*kx, by=(b[0]-a[0])*ky;
   const l2=bx*bx+by*by; let t=l2?(px*bx+py*by)/l2:0; t=Math.max(0,Math.min(1,t));
   return Math.hypot(px-t*bx,py-t*by);
 }
-function tailPts(){   // [punto ≥4 m atrás, último punto] del tramo actual
-  const n=trailLatLngs.length; if(n<2) return null;
-  const h=trailLatLngs[n-1], lo=Math.max(brk.length?brk[brk.length-1]:0,n-9);
-  for(let i=n-2;i>=lo;i--){ const q=trailLatLngs[i]; if(haversineMeters(q[0],q[1],h[0],h[1])>=4) return [q,h]; }
-  return null;
-}
-function courseNow(){
-  const c=Number(latestBusData&&latestBusData.course_deg), v=Number(lastBusInfo&&lastBusInfo.rawSpeedKmh);
-  return (isFinite(c)&&c>=0&&v>=8)?c:-1;
-}
 async function routeSegment(a,b,courseDeg){
-  const brB=courseDeg>=0?Math.round(courseDeg)%360:bearingDeg(a,b), t=tailPts(), brA=t?bearingDeg(t[0],t[1]):brB;
+  const br=courseDeg>=0?Math.round(courseDeg)%360:bearingDeg(a,b);   // rumbo del GPS si es fiable
   const ac=new AbortController(), to=setTimeout(()=>ac.abort(),5000);
   try{
-    // bearings ±50° (sentido de marcha → calzada correcta) + radiuses 25 m (solo calles cercanas)
-    const r=await fetch(`https://router.project-osrm.org/route/v1/driving/${a[1]},${a[0]};${b[1]},${b[0]}?overview=full&geometries=geojson&alternatives=false&continue_straight=true&radiuses=25;25&bearings=${brA},50;${brB},50`,{signal:ac.signal});
-    if(!r.ok){ if(r.status===400||r.status===404||r.status===422) return null; throw 0; }   // sin calle cercana ≠ fallo de red
+    // bearings ±60° + continue_straight: solo calles en el sentido de marcha (calzada correcta, sin calles laterales)
+    const r=await fetch(`https://router.project-osrm.org/route/v1/driving/${a[1]},${a[0]};${b[1]},${b[0]}?overview=full&geometries=geojson&alternatives=false&continue_straight=true&radiuses=30;30&bearings=${br},60;${br},60`,{signal:ac.signal});
+    if(!r.ok) throw 0;
     const rt=(await r.json())?.routes?.[0];
     if(!rt) return null;
     const pts=rt.geometry.coordinates.map(c=>[c[1],c[0]]);
@@ -736,81 +723,71 @@ async function routeSegment(a,b,courseDeg){
     return pts;
   } finally { clearTimeout(to); }
 }
-function netBlocked(){ return routePending||navigator.onLine===false||Date.now()<routePausedUntil; }
-function netFail(){ if(++routeFails>=5){ routeFails=0; routePausedUntil=Date.now()+60000; } }
-// Inicio (o reinicio tras rechazos): primer punto sobre la calzada con "nearest" + rumbo
-function startTrail(p){
-  if(netBlocked()) return;
-  routePending=true;
-  snapToRoad(p[0],p[1],courseNow())
-    .then(pt=>{
-      routeFails=0;
-      if(haversineMeters(p[0],p[1],pt[0],pt[1])<=SNAP_MAX_ERR_M){
-        newSegment(); pushTrail(pt); ctrl.length=0; ctrl.push(pt); lastRouteOkAt=Date.now();
-      }
-    })
-    .catch(netFail)
-    .finally(()=>{ routePending=false; });
-}
-function extendTrail(ref,p){
-  if(netBlocked()||Date.now()-lastRouteAt<(_netSlowNow()?4000:ROUTE_MS)) return;
+function extendTrail(ref,p,useCourse){
+  if(routePending||document.hidden||navigator.onLine===false||Date.now()<routePausedUntil) return false;
   routePending=true; lastRouteAt=Date.now();
-  routeSegment(ref,p,courseNow())
+  const c=Number(latestBusData&&latestBusData.course_deg);
+  routeSegment(ref,p,(useCourse&&isFinite(c)&&c>=0)?c:-1)
     .then(pts=>{
       routeFails=0;
       if(pts&&pts.length>1){
-        routeRejects=0; lastRouteOkAt=Date.now();
-        pts.slice(1).forEach(pushTrail);
+        routeRejects=0;
+        if(trailLatLngs.length<=1){ trailLatLngs.length=0; if(trailVisible) trailLine.setLatLngs([]); pts.forEach(pushTrail); }
+        else pts.slice(1).forEach(pushTrail);
         ctrl.length=0; ctrl.push(pts[pts.length-1]);
-      } else if(++routeRejects>=4){ routeRejects=0; ctrl.length=0; }   // 4 rechazos: nuevo tramo sobre la calle (sin unir con recta)
+      } else if(++routeRejects>=8){ routeRejects=0; addControl(p); }   // calle que no existe en OSM: último recurso
     })
-    .catch(netFail)
+    .catch(()=>{ if(++routeFails>=5){ routeFails=0; routePausedUntil=Date.now()+60000; } })   // sin red: se reintenta, no se dibuja a ciegas
     .finally(()=>{ routePending=false; });
+  return true;
 }
-// Cola local (cada 0.5 s): prolonga el último punto de la calle en su dirección, nunca hacia el GPS crudo
+// Cola: prolonga la geometría confirmada de la calle hasta el vehículo → punto SOBRE la vía y rumbo de la flecha
 function tangentHead(rawLat,rawLon){
-  const t=tailPts(); if(!t) return null;
-  const a=t[0], h=t[1], kx=111320*Math.cos(h[0]*Math.PI/180), ky=110574;
+  const n=trailLatLngs.length; if(n<2) return null;
+  const h=trailLatLngs[n-1]; let a=null;
+  for(let i=n-2;i>=0&&i>=n-8;i--){ const q=trailLatLngs[i]; if(haversineMeters(q[0],q[1],h[0],h[1])>=4){ a=q; break; } }
+  if(!a) return null;
+  const kx=111320*Math.cos(h[0]*Math.PI/180), ky=110574;
   let ux=(h[1]-a[1])*kx, uy=(h[0]-a[0])*ky; const ul=Math.hypot(ux,uy); if(!ul) return null; ux/=ul; uy/=ul;
-  const wx=(rawLon-h[1])*kx, wy=(rawLat-h[0])*ky, d=wx*ux+wy*uy, lat=Math.abs(wx*uy-wy*ux);
-  if(d<=1||lat>25) return null;
-  const L=Math.min(d,45);
-  return [h[0]+uy*L/ky, h[1]+ux*L/kx];
-}
-// Flecha: siempre sobre la calzada; si OSRM no responde >15 s y el vehículo se alejó >60 m, usa el GPS
-function placeBusMarker(i){
-  const n=trailLatLngs.length, h=n?trailLatLngs[n-1]:null;
-  let pos=[i.lat,i.lon];
-  if(h&&!(Date.now()-lastRouteOkAt>15000&&haversineMeters(h[0],h[1],i.lat,i.lon)>60)) pos=tangentHead(i.lat,i.lon)||h;
-  busMarker.setLatLng(pos); rotateBus();
-}
-function updateHeading(i){
-  const c=Number(latestBusData&&latestBusData.course_deg);
-  if(i.rawSpeedKmh>=5&&isFinite(c)&&c>=0) busHeading=c;
-  else if(i.rawSpeedKmh>=2){ const t=tailPts(); if(t) busHeading=bearingDeg(t[0],t[1]); }
+  const wx=(rawLon-h[1])*kx, wy=(rawLat-h[0])*ky, t=wx*ux+wy*uy, lat=Math.abs(wx*uy-wy*ux);
+  if(t<=1||lat>25) return null;
+  const L=Math.min(t,90);
+  return {pt:[h[0]+uy*L/ky, h[1]+ux*L/kx], deg:Math.round((Math.atan2(ux,uy)*180/Math.PI+360)%360)};
 }
 
-// ✅ Trail: sin rayas en reposo y siempre sobre la calle
-let slowSince=0, fastSince=0;
+// ✅ Trail: dibujo forzado cada tick; devuelve la posición de la flecha, siempre sobre la calle
+let slowSince=0, fastSince=0, stopClosed=false, firstAt=0;
 function updateGreenTrailForced(rawLat, rawLon, rawSpeedKmh) {
   const speedKmh=Number(rawSpeedKmh||0), now=Date.now();
-  const ref=ctrl.length?ctrl[ctrl.length-1]:null;
-  const dRef=ref?haversineMeters(ref[0],ref[1],rawLat,rawLon):0;
+  const ref=ctrl.length?ctrl[ctrl.length-1]:(trailLatLngs.length?trailLatLngs[trailLatLngs.length-1]:null);
+  if(!ref){   // aún sin recorrido: primer punto SOBRE la calle (OSRM nearest)
+    if(!firstAt) firstAt=now;
+    const rp=pickRoadPoint(rawLat,rawLon), snapped=(rp[0]!==rawLat||rp[1]!==rawLon);
+    if(snapped||now-firstAt>20000) addControl(snapped?rp:[rawLat,rawLon]);
+    return snapped?{pt:rp,deg:null}:null;
+  }
+  const dRef=haversineMeters(ref[0],ref[1],rawLat,rawLon);
   const slow=speedKmh<STOPPED_SPEED_KMH;
   if(slow){ fastSince=0; if(!slowSince) slowSince=now; } else { slowSince=0; if(!fastSince) fastSince=now; }
   if(slowSince&&now-slowSince>=5000) trailFrozen=true;
-  if(trailFrozen&&((fastSince&&now-fastSince>=2500)||dRef>35)){ trailFrozen=false; lastSmoothed=null; }
-  if(ref&&(trailFrozen||(slow&&dRef<35))){
-    if(trailVisible&&trailLatLngs.length){ const l=trailLatLngs[trailLatLngs.length-1]; trailHead.setLatLngs([l,l]); }
-    lastSmoothed=null; return;
+  if(trailFrozen&&((fastSince&&now-fastSince>=2500)||dRef>35)){ trailFrozen=false; stopClosed=false; lastSmoothed=null; }
+  if(trailFrozen||(slow&&dRef<35)){      // reposo: no se dibuja ruido GPS
+    if(trailFrozen&&!stopClosed&&dRef>=8&&extendTrail(ref,[rawLat,rawLon],false)) stopClosed=true;   // cierra la línea donde se detuvo
+    flushTail();
+    const l=trailLatLngs[trailLatLngs.length-1];
+    if(trailVisible) trailHead.setLatLngs([l,l]);
+    lastSmoothed=null;
+    return {pt:l,deg:null};
   }
   const p0=stablePoint(rawLat,rawLon);
   lastSmoothed=ema2(lastSmoothed,p0,speedKmh>=15?1:SMOOTH_ALPHA_POS);
   const p=lastSmoothed;
-  if(!ref) startTrail(p);
-  else if(haversineMeters(ref[0],ref[1],p[0],p[1])>=MIN_ADD_DIST_M) extendTrail(ref,p);
-  const h=trailLatLngs[trailLatLngs.length-1];
-  if(trailVisible&&h){ const hp=tangentHead(rawLat,rawLon); trailHead.setLatLngs(hp?[h,hp]:[h,h]); }
+  const d=haversineMeters(ref[0],ref[1],p[0],p[1]), slowNet=_netSlowNow();
+  const due=(now-lastRouteAt>=(slowNet?5000:CONFIRM_MS))||(!slowNet&&d>=HEAD_MAX_M&&now-lastRouteAt>=1000);
+  if(d>=MIN_ADD_DIST_M&&due) extendTrail(ref,p,speedKmh>=8);
+  const h=trailLatLngs[trailLatLngs.length-1], t=tangentHead(rawLat,rawLon), q=t?t.pt:h;
+  if(trailVisible) trailHead.setLatLngs([h,q]);   // cola dibujada en CADA tick: sin tramos vacíos
+  return {pt:q,deg:t?t.deg:null};
 }
 
 // ─── Contenedores ───────────────────────────────────
@@ -875,7 +852,7 @@ function buildSolicitudPopupHtml(fbKey, esMio, color, etaTxt="--", distTxt="--",
   </div>`;
 }
 
-let lastBusInfo=null, lastDataAt=0;
+let lastBusInfo=null;
 function stopPopupHtml(s){
   const i=lastBusInfo, t=`🗑️ ${s.name}`;
   if(!i) return buildStopPopupHtml(t);
@@ -902,12 +879,8 @@ let nodoFijoMarker=null;
 let nodoFijoLast={dist_m:null,eta_s:null};
 
 function buildNodoFijoPopupHtml(speedKmh) {
-  let distTxt=(isFinite(nodoFijoLast.dist_m)&&nodoFijoLast.dist_m>=0)?formatDist(nodoFijoLast.dist_m):"--";
-  let etaTxt =(isFinite(nodoFijoLast.eta_s) &&nodoFijoLast.eta_s >0) ?formatETA(nodoFijoLast.eta_s) :"--";
-  if(lastBusInfo&&nodoFijoMarker){   // cálculo local en tiempo real con la posición actual del vehículo
-    const ll=nodoFijoMarker.getLatLng(), d=haversineMeters(lastBusInfo.lat,lastBusInfo.lon,ll.lat,ll.lng);
-    distTxt=formatDist(d); etaTxt=formatETA(calcEtaSeconds(d,lastBusInfo.usedSpeedKmh));
-  }
+  const distTxt=(isFinite(nodoFijoLast.dist_m)&&nodoFijoLast.dist_m>=0)?formatDist(nodoFijoLast.dist_m):"--";
+  const etaTxt =(isFinite(nodoFijoLast.eta_s) &&nodoFijoLast.eta_s >0) ?formatETA(nodoFijoLast.eta_s) :"--";
   return buildStopPopupHtml("🗑️ NodoFijo",etaTxt,distTxt,`${Number(speedKmh||0).toFixed(1)} km/h`);
 }
 function upsertNodoFijoMarker(lat,lon) {
@@ -924,7 +897,7 @@ function upsertNodoFijoMarker(lat,lon) {
 function setBusMovingState(isMoving) {
   if(busIsMoving===isMoving) return;
   busIsMoving=isMoving;
-  busMarker.setIcon(BUS_ICONS[+isMoving]); rotateBus();
+  { const a=_arrowEl(); if(a) a.classList.toggle("moving",isMoving); }
   const el=document.getElementById("busState");
   if(el){
     el.classList.toggle("moving", isMoving);
@@ -960,11 +933,9 @@ function applyBusDataToUIAndMap(d) {
   const usedSpeedKmh=pickSpeedKmh(rawSpeedKmh);
   document.getElementById("hora").textContent=d.hora_ecuador??"--";
   setBusMovingState(rawSpeedKmh>=1.0);
-  document.getElementById("busState").textContent=busIsMoving?"Movimiento":"Detenido";
   const busPos=[lat,lon];
-  if(!trailLatLngs.length) busMarker.setLatLng(busPos);
-  if(!lastLatLng) progView(()=>map.setView(busPos,17,{animate:false}));
-  else if(followEnabled&&!map.getBounds().pad(-0.35).contains(busPos)) progView(()=>map.panTo(busPos,{animate:false}));
+  if(!lastLatLng) progView(()=>map.setView(busPos,17));
+  else if(followEnabled&&!map.getBounds().pad(-0.3).contains(busPos)) progView(()=>map.panTo(busPos,{animate:false}));
   lastLatLng=busPos;
   const ph=buildBusPopupHtml(rawSpeedKmh,busIsMoving);
   if(busMarker.getPopup()) busMarker.setPopupContent(ph);
@@ -984,9 +955,10 @@ function scheduleTick(){   // procesa cada dato al llegar (máx. 1 por segundo) 
 function busTick(){
   _lastTickAt=Date.now();
   if(!latestBusData) return;
-  if(Date.now()-lastDataAt>20000){          // el ESP32 dejó de enviar: no mostrar ETA con datos viejos
+  if(Date.now()-lastDataAt>20000){      // el ESP32 dejó de enviar: no mostrar datos viejos como actuales
     lastBusInfo=null; setBusMovingState(false);
     const el=document.getElementById("busState"); if(el) el.textContent="Sin datos";
+    busIsMoving=null;
     return;
   }
   const info=applyBusDataToUIAndMap(latestBusData);
@@ -994,8 +966,9 @@ function busTick(){
   lastBusInfo=info;
 
   // ✅ Pasar velocidad cruda al trail para que detecte reposo
-  updateGreenTrailForced(info.lat, info.lon, info.rawSpeedKmh);
-  updateHeading(info); placeBusMarker(info);
+  const mp=updateGreenTrailForced(info.lat, info.lon, info.rawSpeedKmh);
+  busMarker.setLatLng(mp?mp.pt:[info.lat,info.lon]);
+  if(mp&&mp.deg!=null) setArrow(mp.deg);
 
   // Contenedores / NodoFijo
   if(activeStopId){
